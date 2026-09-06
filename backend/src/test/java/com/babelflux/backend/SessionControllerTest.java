@@ -1,6 +1,6 @@
 package com.babelflux.backend;
 
-import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -20,13 +20,38 @@ class SessionControllerTest {
 
     @Test
     void createsSessionAndListsHistory() throws Exception {
-        mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON).content("{\"sourceLanguage\":\"en\",\"targetLanguage\":\"zh\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.sessionId").isString()).andExpect(jsonPath("$.wsToken").isString());
-        mockMvc.perform(get("/api/sessions/history")).andExpect(status().isOk()).andExpect(jsonPath("$.items", hasSize(1)));
+        String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON).content("{\"sourceLanguage\":\"en\",\"targetLanguage\":\"zh\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.sessionId").isString()).andExpect(jsonPath("$.wsToken").isString())
+                .andReturn().getResponse().getContentAsString();
+        String sessionId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).get("sessionId").asText();
+        mockMvc.perform(get("/api/sessions/history")).andExpect(status().isOk()).andExpect(jsonPath("$.items[*].sessionId", hasItem(sessionId)));
     }
 
     @Test
     void healthIsAvailable() throws Exception {
         mockMvc.perform(get("/api/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ok"));
+    }
+
+    @Test
+    void issuesAndConsumesOneTimeHandoffToken() throws Exception {
+        String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sessionName\":\"handoff-test\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String sessionId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).get("sessionId").asText();
+        String handoff = mockMvc.perform(post("/api/sessions/" + sessionId + "/handoff")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"displayMode\":\"bilingual\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.handoffToken").isString()).andReturn().getResponse().getContentAsString();
+        String token = new com.fasterxml.jackson.databind.ObjectMapper().readTree(handoff).get("handoffToken").asText();
+        org.hamcrest.MatcherAssert.assertThat(token, org.hamcrest.Matchers.startsWith("h_"));
+        mockMvc.perform(post("/api/sessions/handoff/claim").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.wsToken").value(org.hamcrest.Matchers.startsWith("w_")))
+                .andExpect(jsonPath("$.wsUrl").value(org.hamcrest.Matchers.containsString("?token=w_")));
+        mockMvc.perform(post("/api/sessions/handoff/claim").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isConflict());
+        mockMvc.perform(post("/api/sessions/handoff/claim").contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
     }
 }
