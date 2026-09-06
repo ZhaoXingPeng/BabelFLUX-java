@@ -92,7 +92,14 @@ messages are routed to the durable dead-letter queue. The checked-in tests use
 H2 and mocks only, so they do not claim a live RabbitMQ verification.
 
 Enable Elasticsearch explicitly with `ELASTICSEARCH_ENABLED=true` after
-provisioning it; report indexing/search remains a separate migration slice.
+provisioning it. Reports are indexed as idempotent documents in the versioned
+`babelflux-reports-v1` index. Search is exposed at
+`GET /api/reports/search?q=&sourceLanguage=&domain=&from=&to=&page=&size=`;
+results return `reportId` and `sessionId` so MySQL remains the source of truth.
+Index jobs expose `GET /api/reports/{reportId}/index-status`, and
+`POST /api/reports/rebuild` queues all persisted report snapshots for a rebuild.
+Index failures stay in MySQL with retry timestamps and the report endpoint
+continues to read the MySQL snapshot.
 
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.

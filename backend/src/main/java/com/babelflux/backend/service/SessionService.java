@@ -7,6 +7,7 @@ import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEvent;
 import com.babelflux.backend.messaging.SessionEventFactory;
+import com.babelflux.backend.search.ReportIndexingPort;
 import com.babelflux.backend.web.dto.CreateSessionRequest;
 import java.util.Comparator;
 import java.util.List;
@@ -21,15 +22,17 @@ public class SessionService {
     private final BabelFluxProperties properties;
     private final JdbcSessionEventOutbox outbox;
     private final SessionEventFactory eventFactory;
+    private final ReportIndexingPort reportIndexing;
 
     public SessionService(SessionRepository repository, SessionReportService reports,
                           BabelFluxProperties properties, JdbcSessionEventOutbox outbox,
-                          SessionEventFactory eventFactory) {
+                          SessionEventFactory eventFactory, ReportIndexingPort reportIndexing) {
         this.repository = repository;
         this.reports = reports;
         this.properties = properties;
         this.outbox = outbox;
         this.eventFactory = eventFactory;
+        this.reportIndexing = reportIndexing;
     }
 
     @Transactional
@@ -65,6 +68,7 @@ public class SessionService {
         SessionReport report = reports.generate(session);
         session.attachReport(report);
         repository.save(session);
+        reportIndexing.enqueue(report);
         appendEventIfEnabled(eventFactory.finished(session, report));
         appendEventIfEnabled(eventFactory.reportGenerated(session, report));
         return report;

@@ -78,7 +78,7 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 
 ### 后端迁移状态
 
-后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器。中间件默认关闭，启用方式和边界见 [backend/README.md](backend/README.md)。实时 DashScope WebSocket 管线和完整报告生成将在后续小 PR 中按现有事件契约逐步迁移。
+后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；RabbitMQ 事件 outbox、ES 报告检索与 MySQL 事实源边界已落地。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。实时 DashScope WebSocket 管线和完整报告生成将在后续小 PR 中按现有事件契约逐步迁移。
 
 ### 界面 03 模型策略
 
