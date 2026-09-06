@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,20 +35,28 @@ public class RealtimeSessionRunner {
     private final DashScopeProperties properties;
     private final SessionService sessions;
     private final RealtimeRevisionService revisions;
+    private final MediaPcmSource media;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public RealtimeSessionRunner(DashScopeRealtimeClient realtime, DashScopeProperties properties,
                                  SessionService sessions) {
-        this(realtime, properties, sessions, null);
+        this(realtime, properties, sessions, null, null);
+    }
+
+    public RealtimeSessionRunner(DashScopeRealtimeClient realtime, DashScopeProperties properties,
+                                 SessionService sessions, RealtimeRevisionService revisions) {
+        this(realtime, properties, sessions, revisions, null);
     }
 
     @Autowired
     public RealtimeSessionRunner(DashScopeRealtimeClient realtime, DashScopeProperties properties,
-                                 SessionService sessions, RealtimeRevisionService revisions) {
+                                 SessionService sessions, RealtimeRevisionService revisions,
+                                 MediaPcmSource media) {
         this.realtime = realtime;
         this.properties = properties;
         this.sessions = sessions;
         this.revisions = revisions;
+        this.media = media;
     }
 
     public RunHandle start(Session session, Sink sink) {
@@ -116,6 +125,7 @@ public class RealtimeSessionRunner {
                 if ("demo".equalsIgnoreCase(session.getInputMode())) runDemo();
                 else if (properties.getApiKey() == null || properties.getApiKey().isBlank())
                     throw new DashScopeRealtimeUnavailableException("DASHSCOPE_API_KEY 未配置，无法启动实时同传");
+                else if ("url".equalsIgnoreCase(session.getInputMode())) runRemoteMedia();
                 else runLive();
             } catch (Exception error) {
                 emitQuietly(Map.of("type", "error", "message", error.getMessage() == null
@@ -180,6 +190,65 @@ public class RealtimeSessionRunner {
                     if (drainProvider(provider)) break;
                 }
             }
+        }
+
+        private void runRemoteMedia() throws Exception {
+            if (media == null) throw new MediaPcmSource.MediaDecodeException("Java 媒体解码器未配置");
+            if (session.getSourceUrl() == null || session.getSourceUrl().isBlank()) {
+                throw new MediaPcmSource.MediaDecodeException("缺少在线媒体 URL");
+            }
+            try (MediaPcmSource.Stream source = media.open(session.getSourceUrl())) {
+                Future<?> producer = executor.submit(() -> produceMedia(source));
+                try {
+                    runLive();
+                    if (producer.isDone() && !producer.isCancelled()) producer.get();
+                } finally {
+                    producer.cancel(true);
+                }
+            }
+        }
+
+        private void produceMedia(MediaPcmSource.Stream source) {
+            byte[] frame = new byte[MediaPcmSource.FRAME_BYTES];
+            int offset = 0;
+            try {
+                while (!stopRequested.get()) {
+                    int read = source.read(frame, offset, frame.length - offset);
+                    if (read < 0) break;
+                    if (read == 0) continue;
+                    offset += read;
+                    if (offset == frame.length) {
+                        enqueueAudio(Arrays.copyOf(frame, frame.length));
+                        offset = 0;
+                        Thread.sleep(MediaPcmSource.FRAME_MS);
+                    }
+                }
+                if (offset > 0) enqueueAudio(Arrays.copyOf(frame, offset));
+                int exit = source.awaitExit();
+                if (exit != 0 && !stopRequested.get()) {
+                    throw new MediaPcmSource.MediaDecodeException("ffmpeg 媒体解码失败，退出码：" + exit);
+                }
+            } catch (Exception error) {
+                if (!stopRequested.get()) throw new MediaPcmSource.MediaDecodeException("媒体读取失败", error);
+            } finally {
+                offerAudioEnd();
+            }
+        }
+
+        private void enqueueAudio(byte[] pcm) {
+            if (pcm == null || pcm.length == 0 || ended.get()) return;
+            AudioFrame frame = new AudioFrame(pcm, false);
+            if (!audio.offer(frame)) {
+                audio.poll();
+                audio.offer(frame);
+                emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
+                        "status", "lagging", "lagMs", 0,
+                        "message", "媒体输入超过 1 秒缓冲，已丢弃最旧帧")));
+            }
+        }
+
+        private void offerAudioEnd() {
+            while (!audio.offer(new AudioFrame(new byte[0], true))) audio.poll();
         }
 
         private boolean drainProvider(DashScopeRealtimeClient.LiveSession provider) {

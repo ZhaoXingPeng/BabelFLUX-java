@@ -21,6 +21,15 @@ real session requires `DASHSCOPE_API_KEY`.
 Session creation preserves `sourceUrl`, `sourcePermission`, `ttsEnabled`, and
 the priority-ordered `glossary` fields used by the unchanged Vue client.
 
+For recorded or live online media, create the session with `inputMode=url` and
+provide `sourceUrl`. The Java runner invokes `ffmpeg` to decode HTTP(S) input
+into 16 kHz mono PCM, pacing frames at 40 ms and draining the decoder on EOF.
+Set `FFMPEG_PATH` when the executable is not on `PATH`. Public hosts are
+accepted when `ALLOWED_MEDIA_HOSTS` is empty; set it to exact hosts or
+subdomain patterns such as `*.media.example` to restrict the source set.
+Loopback, link-local, private, multicast, and IPv6 unique-local addresses
+remain blocked even when allow-listed.
+
 ## Desktop handoff
 
 The Web and Tauri clients can hand a live session to the desktop floating

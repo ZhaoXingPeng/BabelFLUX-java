@@ -9,6 +9,8 @@ public class BabelFluxProperties {
     private String apiPrefix = "/api";
     private List<String> corsOrigins = new ArrayList<>();
     private boolean requireModelGatewayAuth;
+    private String allowedMediaHosts = "";
+    private String ffmpegPath = "ffmpeg";
     private Infrastructure infrastructure = new Infrastructure();
 
     public String getApiPrefix() { return apiPrefix; }
@@ -19,6 +21,10 @@ public class BabelFluxProperties {
     public void setRequireModelGatewayAuth(boolean requireModelGatewayAuth) {
         this.requireModelGatewayAuth = requireModelGatewayAuth;
     }
+    public String getAllowedMediaHosts() { return allowedMediaHosts; }
+    public void setAllowedMediaHosts(String allowedMediaHosts) { this.allowedMediaHosts = allowedMediaHosts; }
+    public String getFfmpegPath() { return ffmpegPath; }
+    public void setFfmpegPath(String ffmpegPath) { this.ffmpegPath = ffmpegPath; }
     public Infrastructure getInfrastructure() { return infrastructure; }
     public void setInfrastructure(Infrastructure infrastructure) { this.infrastructure = infrastructure; }
 
