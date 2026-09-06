@@ -24,3 +24,24 @@ create table if not exists babelflux_sessions (
     segments_json text not null,
     report_json text
 );
+
+create table if not exists babelflux_session_event_outbox (
+    event_id varchar(64) primary key,
+    event_type varchar(128) not null,
+    schema_version integer not null,
+    session_id varchar(64) not null,
+    occurred_at timestamp not null,
+    payload text not null,
+    status varchar(16) not null,
+    attempts integer not null default 0,
+    next_attempt_at timestamp not null,
+    created_at timestamp not null default current_timestamp,
+    published_at timestamp null
+);
+
+create table if not exists babelflux_session_event_receipts (
+    event_id varchar(64) primary key,
+    event_type varchar(128) not null,
+    session_id varchar(64) not null,
+    received_at timestamp not null default current_timestamp
+);

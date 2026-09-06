@@ -3,22 +3,36 @@ package com.babelflux.backend.service;
 import com.babelflux.backend.domain.Session;
 import com.babelflux.backend.domain.SessionReport;
 import com.babelflux.backend.domain.SessionRepository;
+import com.babelflux.backend.config.BabelFluxProperties;
+import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
+import com.babelflux.backend.messaging.SessionEvent;
+import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.web.dto.CreateSessionRequest;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class SessionService {
     private final SessionRepository repository;
     private final SessionReportService reports;
+    private final BabelFluxProperties properties;
+    private final JdbcSessionEventOutbox outbox;
+    private final SessionEventFactory eventFactory;
 
-    public SessionService(SessionRepository repository, SessionReportService reports) {
+    public SessionService(SessionRepository repository, SessionReportService reports,
+                          BabelFluxProperties properties, JdbcSessionEventOutbox outbox,
+                          SessionEventFactory eventFactory) {
         this.repository = repository;
         this.reports = reports;
+        this.properties = properties;
+        this.outbox = outbox;
+        this.eventFactory = eventFactory;
     }
 
+    @Transactional
     public Session create(CreateSessionRequest request) {
         var glossary = request.glossary().stream()
                 .filter(term -> term.sourceTerm() != null && !term.sourceTerm().isBlank()
@@ -38,9 +52,12 @@ public class SessionService {
                 defaultValue(request.sourceFileName(), defaultValue(request.sourceKey(), "demo")),
                 request.sourceUrl(), defaultValue(request.sourcePermission(), "idle"),
                 Boolean.TRUE.equals(request.ttsEnabled()), glossary);
-        return repository.save(session);
+        Session saved = repository.save(session);
+        appendEventIfEnabled(eventFactory.created(saved));
+        return saved;
     }
 
+    @Transactional
     public SessionReport finish(String id) {
         Session session = get(id);
         if (session.getReport() != null) return session.getReport();
@@ -48,6 +65,8 @@ public class SessionService {
         SessionReport report = reports.generate(session);
         session.attachReport(report);
         repository.save(session);
+        appendEventIfEnabled(eventFactory.finished(session, report));
+        appendEventIfEnabled(eventFactory.reportGenerated(session, report));
         return report;
     }
 
@@ -62,6 +81,10 @@ public class SessionService {
     public void delete(String id) { if (!repository.deleteById(id)) throw new SessionNotFoundException(id); }
 
     private static String defaultValue(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
+
+    private void appendEventIfEnabled(SessionEvent event) {
+        if (properties.getInfrastructure().isRabbitmqEnabled()) outbox.append(event);
+    }
 
     public static class SessionNotFoundException extends RuntimeException {
         public SessionNotFoundException(String id) { super("session not found: " + id); }
