@@ -35,19 +35,35 @@ public class JdbcSessionEventOutbox {
 
     public List<PendingEvent> pending(int limit) {
         return jdbc.query("select event_id, event_type, session_id, payload, attempts "
-                        + "from babelflux_session_event_outbox where status='pending' "
-                        + "and next_attempt_at <= current_timestamp order by created_at limit ?",
+                        + "from babelflux_session_event_outbox where "
+                        + "(status='pending' and next_attempt_at <= current_timestamp) "
+                        + "or (status='processing' and lease_until is not null "
+                        + "and lease_until <= current_timestamp) order by created_at limit ?",
                 this::map, limit);
     }
 
-    public void markPublished(String eventId) {
-        jdbc.update("update babelflux_session_event_outbox set status='published', published_at=current_timestamp "
-                + "where event_id=? and status='pending'", eventId);
+    /**
+     * Claims an event for one relay instance. The conditional update makes
+     * concurrent relays mutually exclusive while allowing expired leases to recover.
+     */
+    public boolean tryClaim(String eventId, String owner, Instant leaseUntil) {
+        return jdbc.update("update babelflux_session_event_outbox set status='processing', lease_owner=?, lease_until=? "
+                        + "where event_id=? and ((status='pending' and next_attempt_at <= current_timestamp) "
+                        + "or (status='processing' and lease_until is not null and lease_until <= current_timestamp))",
+                owner, Timestamp.from(leaseUntil), eventId) == 1;
     }
 
-    public void markFailed(String eventId, Instant nextAttemptAt) {
-        jdbc.update("update babelflux_session_event_outbox set attempts=attempts+1, next_attempt_at=? "
-                + "where event_id=? and status='pending'", Timestamp.from(nextAttemptAt), eventId);
+    public void markPublished(String eventId, String owner) {
+        jdbc.update("update babelflux_session_event_outbox set status='published', published_at=current_timestamp, "
+                + "lease_owner=null, lease_until=null where event_id=? and status='processing' and lease_owner=?",
+                eventId, owner);
+    }
+
+    public void markFailed(String eventId, String owner, Instant nextAttemptAt) {
+        jdbc.update("update babelflux_session_event_outbox set status='pending', attempts=attempts+1, "
+                        + "next_attempt_at=?, lease_owner=null, lease_until=null "
+                        + "where event_id=? and status='processing' and lease_owner=?",
+                Timestamp.from(nextAttemptAt), eventId, owner);
     }
 
     private PendingEvent map(ResultSet row, int ignored) throws SQLException {

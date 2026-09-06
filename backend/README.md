@@ -120,6 +120,10 @@ write. A scheduled relay publishes them to the durable
 record `event_id` receipts in MySQL, making broker redelivery idempotent; bad
 messages are routed to the durable dead-letter queue. The checked-in tests use
 H2 and mocks only, so they do not claim a live RabbitMQ verification.
+Each relay claims pending rows with a short database lease before publishing;
+this prevents concurrent instances from publishing the same row during normal
+polling, while an expired lease remains recoverable. The delivery contract is
+still at-least-once, so consumers must keep their `event_id` idempotency check.
 
 Enable Elasticsearch explicitly with `ELASTICSEARCH_ENABLED=true` after
 provisioning it. Reports are indexed as idempotent documents in the versioned
