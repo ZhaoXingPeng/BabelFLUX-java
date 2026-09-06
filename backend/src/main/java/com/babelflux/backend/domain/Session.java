@@ -17,6 +17,10 @@ public class Session {
     private volatile String productMode;
     private volatile String inputMode;
     private volatile String sourceLabel;
+    private volatile String sourceUrl;
+    private volatile String sourcePermission;
+    private volatile boolean ttsEnabled;
+    private final List<GlossaryTerm> glossary = new CopyOnWriteArrayList<>();
     private volatile SessionReport report;
     private final List<Segment> segments = new CopyOnWriteArrayList<>();
 
@@ -24,12 +28,13 @@ public class Session {
                    String domain, String modelProfile, String productMode, String inputMode,
                    String sourceLabel) {
         this(id, Instant.now(), sessionName, sourceLanguage, targetLanguage, domain,
-                modelProfile, productMode, inputMode, sourceLabel);
+                modelProfile, productMode, inputMode, sourceLabel, null, "idle", false, List.of());
     }
 
     private Session(String id, Instant createdAt, String sessionName, String sourceLanguage,
                     String targetLanguage, String domain, String modelProfile, String productMode,
-                    String inputMode, String sourceLabel) {
+                    String inputMode, String sourceLabel, String sourceUrl, String sourcePermission,
+                    boolean ttsEnabled, List<GlossaryTerm> glossary) {
         this.id = id;
         this.createdAt = createdAt;
         this.status = "created";
@@ -41,6 +46,35 @@ public class Session {
         this.productMode = productMode;
         this.inputMode = inputMode;
         this.sourceLabel = sourceLabel;
+        this.sourceUrl = sourceUrl;
+        this.sourcePermission = sourcePermission == null ? "idle" : sourcePermission;
+        this.ttsEnabled = ttsEnabled;
+        if (glossary != null) this.glossary.addAll(glossary);
+    }
+
+    public static Session create(String id, String sessionName, String sourceLanguage, String targetLanguage,
+                                  String domain, String modelProfile, String productMode, String inputMode,
+                                  String sourceLabel, String sourceUrl, String sourcePermission,
+                                  boolean ttsEnabled, List<GlossaryTerm> glossary) {
+        return new Session(id, Instant.now(), sessionName, sourceLanguage, targetLanguage, domain,
+                modelProfile, productMode, inputMode, sourceLabel, sourceUrl, sourcePermission,
+                ttsEnabled, glossary);
+    }
+
+    public static Session restore(String id, Instant createdAt, Instant endedAt, String status,
+                                  String sessionName, String sourceLanguage, String targetLanguage,
+                                  String domain, String modelProfile, String productMode,
+                                  String inputMode, String sourceLabel, String sourceUrl,
+                                  String sourcePermission, boolean ttsEnabled, List<GlossaryTerm> glossary,
+                                  List<Segment> segments, SessionReport report) {
+        Session session = new Session(id, createdAt, sessionName, sourceLanguage, targetLanguage,
+                domain, modelProfile, productMode, inputMode, sourceLabel, sourceUrl, sourcePermission,
+                ttsEnabled, glossary);
+        session.endedAt = endedAt;
+        session.status = status;
+        if (segments != null) session.segments.addAll(segments);
+        session.report = report;
+        return session;
     }
 
     public static Session restore(String id, Instant createdAt, Instant endedAt, String status,
@@ -48,13 +82,9 @@ public class Session {
                                   String domain, String modelProfile, String productMode,
                                   String inputMode, String sourceLabel, List<Segment> segments,
                                   SessionReport report) {
-        Session session = new Session(id, createdAt, sessionName, sourceLanguage, targetLanguage,
-                domain, modelProfile, productMode, inputMode, sourceLabel);
-        session.endedAt = endedAt;
-        session.status = status;
-        if (segments != null) session.segments.addAll(segments);
-        session.report = report;
-        return session;
+        return restore(id, createdAt, endedAt, status, sessionName, sourceLanguage, targetLanguage,
+                domain, modelProfile, productMode, inputMode, sourceLabel, null, "idle", false,
+                List.of(), segments, report);
     }
 
     public String getId() { return id; }
@@ -69,6 +99,10 @@ public class Session {
     public String getProductMode() { return productMode; }
     public String getInputMode() { return inputMode; }
     public String getSourceLabel() { return sourceLabel; }
+    public String getSourceUrl() { return sourceUrl; }
+    public String getSourcePermission() { return sourcePermission; }
+    public boolean isTtsEnabled() { return ttsEnabled; }
+    public List<GlossaryTerm> getGlossary() { return List.copyOf(glossary); }
     public SessionReport getReport() { return report; }
     public List<Segment> getSegments() { return List.copyOf(segments); }
 
@@ -84,6 +118,8 @@ public class Session {
         endedAt = Instant.now();
     }
     public void addSegment(Segment segment) { segments.add(segment); }
+
+    public record GlossaryTerm(String sourceTerm, String targetTerm, int priority, String note) {}
 
     public record Segment(String segmentId, String sourceText, String translationText,
                           long startMs, long endMs, String status) {}

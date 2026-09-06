@@ -16,6 +16,9 @@ The default server is `http://localhost:8000`. The migration slice provides
 `/api/ws/sessions/{sessionId}`. Binary PCM frames are accepted by the socket;
 DashScope realtime ingestion is implemented in the next slice.
 
+Session creation preserves `sourceUrl`, `sourcePermission`, `ttsEnabled`, and
+the priority-ordered `glossary` fields used by the unchanged Vue client.
+
 ## Desktop handoff
 
 The Web and Tauri clients can hand a live session to the desktop floating
@@ -50,6 +53,16 @@ The default `DASHSCOPE_HTTP_BASE_URL` uses the native Bailian generation paths.
 When it points at a Bailian `/compatible-mode/v1` endpoint, the adapter uses
 `/chat/completions` and keeps the same response contract. `DASHSCOPE_API_KEY`
 is required at request time and is never logged or persisted.
+
+The model protocol also exposes:
+
+- `POST /api/models/strategy/plan` for a deterministic provider/revision plan;
+- `POST /api/models/asr/transcriptions` for PCM multipart transcription;
+- `POST /api/models/tts/speech` for realtime TTS audio returned as base64.
+
+ASR and TTS use the Bailian WebSocket protocols and have the same timeout and
+error-boundary rules as the LLM adapter. Unit tests use a fake transport; no
+test sends credentials or audio to a real provider.
 
 ## Technology boundaries
 

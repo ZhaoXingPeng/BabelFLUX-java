@@ -17,6 +17,10 @@ create table if not exists babelflux_sessions (
     product_mode varchar(32) not null,
     input_mode varchar(64) not null,
     source_label varchar(512) not null,
+    source_url varchar(2048),
+    source_permission varchar(32) not null,
+    tts_enabled boolean not null,
+    glossary_json text not null,
     segments_json text not null,
     report_json text
 );

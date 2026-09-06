@@ -43,7 +43,8 @@ public class SessionController {
 
     @PostMapping
     public CreateSessionResponse create(@Valid @RequestBody(required = false) CreateSessionRequest request) {
-        Session session = service.create(request == null ? new CreateSessionRequest(null, null, null, null, null, null, null, null, null, null, null) : request);
+        Session session = service.create(request == null ? new CreateSessionRequest(
+                null, null, null, null, null, null, null, null, null, null, null, null, null) : request);
         return new CreateSessionResponse(session.getId(), tokens.issue(session.getId()), session.getStatus());
     }
 
