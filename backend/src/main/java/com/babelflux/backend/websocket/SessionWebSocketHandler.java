@@ -119,6 +119,16 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             } else {
                 handle.stop();
             }
+        } else if ("media_clock".equals(type)) {
+            Long playbackMs = clockValue(payload.get("playbackMs"));
+            Long sentAudioMs = clockValue(payload.get("sentAudioMs"));
+            if (playbackMs == null || sentAudioMs == null) {
+                send(socket, Map.of("type", "error", "message",
+                        "media_clock 的 playbackMs 和 sentAudioMs 必须是非负整数"));
+                return;
+            }
+            RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
+            if (handle != null) handle.updateClientClock(playbackMs, sentAudioMs);
         } else if ("pause_session".equals(type)) {
             RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
             if (handle != null) handle.pause();
@@ -194,6 +204,11 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     private static String text(JsonNode payload, String field) {
         JsonNode value = payload == null ? null : payload.get(field);
         return value == null || value.isNull() || value.asText().isBlank() ? null : value.asText();
+    }
+    private static Long clockValue(JsonNode value) {
+        if (value == null || value.isNull()) return 0L;
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0) return null;
+        return value.longValue();
     }
     private static String query(WebSocketSession socket, String key) { return socket.getUri() == null ? null : org.springframework.web.util.UriComponentsBuilder.fromUri(socket.getUri()).build().getQueryParams().getFirst(key); }
     private static String pathVariable(WebSocketSession socket, String key) {

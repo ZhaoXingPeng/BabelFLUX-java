@@ -106,4 +106,47 @@ class RealtimeSessionRunnerTest {
         runner.shutdown();
     }
 
+    @Test
+    void mediaClockEmitsBoundedLagUpdates() throws Exception {
+        InMemorySessionRepository repository = new InMemorySessionRepository();
+        DashScopeProperties properties = new DashScopeProperties();
+        SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
+                mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
+        Session session = Session.create("clock-run", "clock", "en", "zh", "通用", "默认",
+                "quick", "demo", "demo", null, "idle", false, List.of());
+        repository.save(session);
+        RealtimeSessionRunner runner = new RealtimeSessionRunner(
+                new DashScopeRealtimeClient(properties, new ObjectMapper()), properties, service);
+        List<Map<String, Object>> events = new ArrayList<>();
+
+        RealtimeSessionRunner.RunHandle handle = runner.start(session, events::add);
+        Thread.sleep(80);
+        handle.updateClientClock(300, 200);
+        handle.updateClientClock(400, 300);
+        long firstCount = events.stream().filter(RealtimeSessionRunnerTest::isClockEvent).count();
+        assertEquals(1, firstCount);
+        Map<String, Object> first = events.stream().filter(RealtimeSessionRunnerTest::isClockEvent).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked") Map<String, Object> state = (Map<String, Object>) first.get("state");
+        assertEquals(300L, state.get("sourceMs"));
+        assertEquals("syncing", state.get("status"));
+
+        Thread.sleep(270);
+        handle.updateClientClock(2_000, 1_800);
+        assertEquals(2, events.stream().filter(RealtimeSessionRunnerTest::isClockEvent).count());
+        Map<String, Object> lagging = events.stream().filter(RealtimeSessionRunnerTest::isClockEvent)
+                .reduce((firstEvent, lastEvent) -> lastEvent).orElseThrow();
+        @SuppressWarnings("unchecked") Map<String, Object> laggingState =
+                (Map<String, Object>) lagging.get("state");
+        assertEquals("lagging", laggingState.get("status"));
+        handle.stop();
+        handle.await(Duration.ofSeconds(3));
+        runner.shutdown();
+    }
+
+    private static boolean isClockEvent(Map<String, Object> event) {
+        if (!"source_sync_state".equals(event.get("type"))) return false;
+        @SuppressWarnings("unchecked") Map<String, Object> state = (Map<String, Object>) event.get("state");
+        return state != null && String.valueOf(state.get("message")).startsWith("媒体同步：");
+    }
+
 }

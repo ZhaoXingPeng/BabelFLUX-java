@@ -82,6 +82,23 @@ class SessionWebSocketHandlerTest {
     }
 
     @Test
+    void forwardsMediaClockAndRejectsInvalidClockValues() throws Exception {
+        String token = tokens.issue("ws-1");
+        WebSocketSession socket = socket("ws-1", token);
+        when(runner.start(any(Session.class), any())).thenReturn(run);
+
+        handler.afterConnectionEstablished(socket);
+        handler.handleTextMessage(socket, new TextMessage("{\"type\":\"start_session\"}"));
+        handler.handleTextMessage(socket, new TextMessage(
+                "{\"type\":\"media_clock\",\"playbackMs\":1200,\"sentAudioMs\":1000}"));
+        verify(run).updateClientClock(1200L, 1000L);
+
+        handler.handleTextMessage(socket, new TextMessage(
+                "{\"type\":\"media_clock\",\"playbackMs\":-1,\"sentAudioMs\":1000}"));
+        assertEquals("error", sent(socket).get("type").asText());
+    }
+
+    @Test
     void rejectsAudioBeforeSessionStartInsteadOfDroppingFrame() throws Exception {
         String token = tokens.issue("ws-1");
         WebSocketSession socket = socket("ws-1", token);

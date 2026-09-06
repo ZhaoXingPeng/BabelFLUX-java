@@ -30,6 +30,8 @@ public class RealtimeSessionRunner {
     private static final int PCM_QUEUE_FRAMES = 25; // 1 second at 40 ms/frame.
     private static final Duration PROVIDER_POLL = Duration.ofMillis(5);
     private static final Duration FINAL_DRAIN = Duration.ofSeconds(8);
+    private static final Duration CLOCK_EMIT_INTERVAL = Duration.ofMillis(250);
+    private static final long CLOCK_LAG_WARN_MS = 600;
 
     private final DashScopeRealtimeClient realtime;
     private final DashScopeProperties properties;
@@ -78,6 +80,9 @@ public class RealtimeSessionRunner {
         private final AtomicBoolean ended = new AtomicBoolean();
         private final AtomicBoolean stopRequested = new AtomicBoolean();
         private final AtomicLong elapsedMs = new AtomicLong();
+        private final AtomicLong clientPlaybackMs = new AtomicLong(-1);
+        private final AtomicLong clientSentAudioMs = new AtomicLong(-1);
+        private final AtomicLong lastClockEmitNanos = new AtomicLong();
         private final LinkedHashMap<String, SegmentState> byId = new LinkedHashMap<>();
         private final List<SegmentState> roots = new ArrayList<>();
         private final Map<String, SegmentState> byItem = new LinkedHashMap<>();
@@ -115,6 +120,12 @@ public class RealtimeSessionRunner {
         public void stop() { endAudio(); }
         public void pause() { paused = true; }
         public void resume() { paused = false; }
+        public void updateClientClock(long playbackMs, long sentAudioMs) {
+            if (ended.get()) return;
+            clientPlaybackMs.set(Math.max(0L, playbackMs));
+            clientSentAudioMs.set(Math.max(0L, sentAudioMs));
+            emitClockSyncIfDue();
+        }
         public void await(Duration timeout) throws Exception {
             Future<?> task = future;
             if (task != null) task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -256,6 +267,23 @@ public class RealtimeSessionRunner {
             if (event == null) return false;
             handleProviderEvent(event);
             return "session_finished".equals(event.kind());
+        }
+
+        private void emitClockSyncIfDue() {
+            long playbackMs = clientPlaybackMs.get();
+            if (playbackMs < 0) return;
+            long now = System.nanoTime();
+            long previous = lastClockEmitNanos.get();
+            if (previous != 0 && now - previous < CLOCK_EMIT_INTERVAL.toNanos()) return;
+            if (!lastClockEmitNanos.compareAndSet(previous, now)) return;
+            long elapsed = elapsedMs.get();
+            long lag = playbackMs - elapsed;
+            long sentDelta = clientSentAudioMs.get() - elapsed;
+            String status = Math.abs(lag) <= CLOCK_LAG_WARN_MS ? "syncing" : "lagging";
+            emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
+                    "status", status, "lagMs", lag, "sourceMs", playbackMs,
+                    "message", "媒体同步：播放 %ds，后端音频 %ds，发送差 %dms"
+                            .formatted(playbackMs / 1000, elapsed / 1000, sentDelta))));
         }
 
         private void handleProviderEvent(DashScopeRealtimeClient.NormalizedEvent event) {
