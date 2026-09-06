@@ -62,9 +62,13 @@ is required at request time and is never logged or persisted.
 - `provider`: Alibaba Cloud Bailian (DashScope) HTTP adapter.
 
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
-is runnable without external services. Enable them explicitly with
-`REDIS_ENABLED=true`, `RABBITMQ_ENABLED=true`, or
-`ELASTICSEARCH_ENABLED=true` after provisioning the corresponding service.
+is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC
+session repository (the default remains in-memory/H2); it persists session
+metadata, segment JSON, and report snapshots. Enable Redis, RabbitMQ, or
+Elasticsearch explicitly with `REDIS_ENABLED=true`, `RABBITMQ_ENABLED=true`,
+or `ELASTICSEARCH_ENABLED=true` after provisioning the corresponding service;
+their application-level responsibilities are tracked as separate migration
+slices.
 
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.
