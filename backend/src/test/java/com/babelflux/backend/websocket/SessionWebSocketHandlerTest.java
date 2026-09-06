@@ -1,8 +1,10 @@
 package com.babelflux.backend.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -23,6 +25,7 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.BinaryMessage;
@@ -102,6 +105,26 @@ class SessionWebSocketHandlerTest {
         assertEquals("session_report", report.get("type").asText());
         assertEquals(session.getReport().reportId(), report.get("reportId").asText());
         assertEquals("ended", session.getStatus());
+    }
+
+    @Test
+    void handoffSocketReplaysEventsWithoutStartingAnotherRunner() throws Exception {
+        SessionEventHub hub = new SessionEventHub();
+        handler = new SessionWebSocketHandler(mapper, sessions, tokens, runner, hub);
+        var handoff = tokens.issueHandoff("ws-1", null, "en", "zh", "bilingual");
+        String token = tokens.issueHandoffWebSocket("ws-1", handoff.expiresAt());
+        WebSocketSession socket = socket("ws-1", token);
+
+        handler.afterConnectionEstablished(socket);
+        handler.handleTextMessage(socket, new TextMessage("{\"type\":\"start_session\"}"));
+        hub.publish("ws-1", Map.of("type", "translation_segment", "segmentId", "s1"));
+
+        var messages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        verify(socket, timeout(1000).atLeast(2)).sendMessage(messages.capture());
+        assertTrue(messages.getAllValues().stream()
+                .anyMatch(message -> message.getPayload().contains("translation_segment")));
+        org.mockito.Mockito.verifyNoInteractions(runner);
+        handler.afterConnectionClosed(socket, CloseStatus.NORMAL);
     }
 
     private WebSocketSession socket(String sessionId, String token) {

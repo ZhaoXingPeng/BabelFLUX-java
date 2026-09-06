@@ -119,6 +119,18 @@ public class Session {
         status = "ended";
         endedAt = Instant.now();
     }
+
+    /** Apply the small set of per-connection overrides supported by the legacy client. */
+    public synchronized void applyOverrides(String sourceLanguage, String targetLanguage, String domain,
+                                             String inputMode, String sourceUrl, String modelProfile) {
+        if (sourceLanguage != null && !sourceLanguage.isBlank()) this.sourceLanguage = sourceLanguage;
+        if (targetLanguage != null && !targetLanguage.isBlank()) this.targetLanguage = targetLanguage;
+        if (domain != null && !domain.isBlank()) this.domain = domain;
+        if (inputMode != null && !inputMode.isBlank()) this.inputMode = inputMode;
+        if (sourceUrl != null && !sourceUrl.isBlank()) this.sourceUrl = sourceUrl;
+        if (modelProfile != null && !modelProfile.isBlank()) this.modelProfile = modelProfile;
+    }
+
     public void addSegment(Segment segment) { segments.add(segment); }
     public synchronized void upsertSegment(Segment segment) {
         for (int index = 0; index < segments.size(); index++) {

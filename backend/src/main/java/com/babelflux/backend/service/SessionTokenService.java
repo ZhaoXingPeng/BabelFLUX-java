@@ -40,7 +40,7 @@ public class SessionTokenService {
     public String issue(String sessionId) {
         cleanup();
         String token = randomToken("w_");
-        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, Instant.now(clock).plus(SESSION_TOKEN_TTL));
+        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, Instant.now(clock).plus(SESSION_TOKEN_TTL), "session");
         try {
             if (redis == null) tokens.put(token, ticket);
             else redis.saveWebSocket(ticket, SESSION_TOKEN_TTL);
@@ -51,6 +51,10 @@ public class SessionTokenService {
     }
 
     public boolean valid(String sessionId, String token) {
+        return valid(sessionId, token, null);
+    }
+
+    public boolean valid(String sessionId, String token, String purpose) {
         cleanup();
         Optional<WebSocketTicket> ticket;
         try {
@@ -60,7 +64,8 @@ public class SessionTokenService {
             throw new TokenStateUnavailableException(error);
         }
         return ticket.isPresent() && ticket.get().sessionId().equals(sessionId)
-                && ticket.get().expiresAt().isAfter(Instant.now(clock));
+                && ticket.get().expiresAt().isAfter(Instant.now(clock))
+                && (purpose == null || purpose.equals(ticket.get().purposeOrDefault()));
     }
 
     public HandoffTicket issueHandoff(String sessionId, String source, String sourceLanguage,
@@ -122,7 +127,7 @@ public class SessionTokenService {
     public String issueHandoffWebSocket(String sessionId, Instant expiresAt) {
         cleanup();
         String token = randomToken("w_");
-        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, expiresAt);
+        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, expiresAt, "handoff");
         Duration ttl = Duration.between(Instant.now(clock), expiresAt);
         try {
             if (redis == null) tokens.put(token, ticket);
@@ -156,7 +161,13 @@ public class SessionTokenService {
                                 String sourceLanguage, String targetLanguage,
                                 String displayMode, Instant expiresAt) {}
 
-    public record WebSocketTicket(String token, String sessionId, Instant expiresAt) {}
+    public record WebSocketTicket(String token, String sessionId, Instant expiresAt, String purpose) {
+        public WebSocketTicket(String token, String sessionId, Instant expiresAt) {
+            this(token, sessionId, expiresAt, "session");
+        }
+
+        String purposeOrDefault() { return purpose == null || purpose.isBlank() ? "session" : purpose; }
+    }
 
     public static class HandoffTokenException extends RuntimeException {
         private final String code;

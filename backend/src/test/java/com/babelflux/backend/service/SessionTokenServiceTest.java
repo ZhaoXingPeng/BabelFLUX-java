@@ -72,6 +72,19 @@ class SessionTokenServiceTest {
     }
 
     @Test
+    void keepsSessionAndHandoffWebSocketTokensScopedToTheirPurpose() {
+        SessionTokenService tokens = new SessionTokenService();
+        String sessionToken = tokens.issue("session-1");
+        Instant expiresAt = Instant.now().plusSeconds(60);
+        String handoffToken = tokens.issueHandoffWebSocket("session-1", expiresAt);
+
+        org.junit.jupiter.api.Assertions.assertTrue(tokens.valid("session-1", sessionToken, "session"));
+        org.junit.jupiter.api.Assertions.assertFalse(tokens.valid("session-1", sessionToken, "handoff"));
+        org.junit.jupiter.api.Assertions.assertTrue(tokens.valid("session-1", handoffToken, "handoff"));
+        org.junit.jupiter.api.Assertions.assertFalse(tokens.valid("session-1", handoffToken, "session"));
+    }
+
+    @Test
     void doesNotSilentlyFallBackWhenRedisIsUnavailable() {
         RedisSessionRepository redis = mock(RedisSessionRepository.class);
         doThrow(new IllegalStateException("connection refused")).when(redis)

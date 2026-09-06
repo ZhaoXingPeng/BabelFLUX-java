@@ -5,13 +5,18 @@ import com.babelflux.backend.service.SessionTokenService;
 import com.babelflux.backend.service.RealtimeSessionRunner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
@@ -26,14 +31,25 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     private final SessionService sessions;
     private final SessionTokenService tokens;
     private final RealtimeSessionRunner runner;
+    private final SessionEventHub eventHub;
     private final ConcurrentMap<String, RealtimeSessionRunner.RunHandle> runs = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, SessionEventHub.Subscription> handoffSubscriptions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Future<?>> handoffTasks = new ConcurrentHashMap<>();
+    private final ExecutorService handoffExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                                    RealtimeSessionRunner runner) {
+        this(mapper, sessions, tokens, runner, new SessionEventHub());
+    }
+
+    @Autowired
+    public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
+                                   RealtimeSessionRunner runner, SessionEventHub eventHub) {
         this.mapper = mapper;
         this.sessions = sessions;
         this.tokens = tokens;
         this.runner = runner;
+        this.eventHub = eventHub;
     }
 
     @Override
@@ -45,13 +61,15 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             socket.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        if (!tokens.valid(id, token)) {
+        boolean handoff = tokens.valid(id, token, "handoff");
+        if (!handoff && !tokens.valid(id, token, "session")) {
             send(socket, Map.of("type", "error", "message", "Invalid WebSocket token"));
             socket.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
         sessions.get(id);
-        send(socket, Map.of("type", "session_started", "sessionId", id));
+        if (handoff) startHandoff(socket, id);
+        else send(socket, Map.of("type", "session_started", "sessionId", id));
     }
 
     @Override
@@ -65,10 +83,17 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         }
         String type = payload.path("type").asText();
         String id = pathVariable(socket, "sessionId");
+        if (handoffSubscriptions.containsKey(socket.getId())) {
+            if ("stop_session".equals(type)) socket.close(CloseStatus.NORMAL);
+            return;
+        }
         var session = sessions.get(id);
         if ("start_session".equals(type)) {
             synchronized (runs) {
                 if (runs.containsKey(socket.getId())) return;
+                session.applyOverrides(text(payload, "sourceLanguage"), text(payload, "targetLanguage"),
+                        text(payload, "domain"), text(payload, "inputMode"), text(payload, "sourceUrl"),
+                        text(payload, "modelProfile"));
                 session.start();
                 AtomicBoolean reportEmitted = new AtomicBoolean();
                 AtomicReference<RealtimeSessionRunner.RunHandle> handleRef = new AtomicReference<>();
@@ -78,6 +103,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                         RealtimeSessionRunner.RunHandle current = handleRef.get();
                         if (current != null) runs.remove(socket.getId(), current);
                     }
+                    eventHub.publish(id, event);
                     send(socket, event);
                 });
                 handleRef.set(handle);
@@ -108,6 +134,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
 
     @Override
     protected void handleBinaryMessage(WebSocketSession socket, BinaryMessage message) {
+        if (handoffSubscriptions.containsKey(socket.getId())) return;
         RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
         if (handle == null) {
             try {
@@ -127,12 +154,46 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     public void afterConnectionClosed(WebSocketSession socket, CloseStatus status) {
         RealtimeSessionRunner.RunHandle handle = runs.remove(socket.getId());
         if (handle != null) handle.stop();
+        SessionEventHub.Subscription subscription = handoffSubscriptions.remove(socket.getId());
+        if (subscription != null) eventHub.unsubscribe(subscription);
+        Future<?> task = handoffTasks.remove(socket.getId());
+        if (task != null) task.cancel(true);
+    }
+
+    private void startHandoff(WebSocketSession socket, String sessionId) throws IOException {
+        SessionEventHub.Subscription subscription = eventHub.subscribe(sessionId);
+        handoffSubscriptions.put(socket.getId(), subscription);
+        send(socket, Map.of("type", "session_started", "sessionId", sessionId));
+        for (Map<String, Object> event : subscription.replay()) send(socket, event);
+        Future<?> task = handoffExecutor.submit(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    Map<String, Object> event = subscription.await(1, java.util.concurrent.TimeUnit.SECONDS);
+                    if (event != null) send(socket, event);
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            } catch (Exception ignored) {
+                // The display-only socket may close while the primary session continues.
+            }
+        });
+        handoffTasks.put(socket.getId(), task);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        handoffTasks.values().forEach(task -> task.cancel(true));
+        handoffExecutor.shutdownNow();
     }
 
     private void send(WebSocketSession socket, Object body) throws IOException {
         synchronized (socket) {
             socket.sendMessage(new TextMessage(mapper.writeValueAsString(body)));
         }
+    }
+    private static String text(JsonNode payload, String field) {
+        JsonNode value = payload == null ? null : payload.get(field);
+        return value == null || value.isNull() || value.asText().isBlank() ? null : value.asText();
     }
     private static String query(WebSocketSession socket, String key) { return socket.getUri() == null ? null : org.springframework.web.util.UriComponentsBuilder.fromUri(socket.getUri()).build().getQueryParams().getFirst(key); }
     private static String pathVariable(WebSocketSession socket, String key) {
