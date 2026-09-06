@@ -41,6 +41,16 @@ mvn -B test
 The current suite covers health/session history plus one-time handoff issue,
 claim, replay rejection, and malformed-token handling.
 
+## DashScope gateway
+
+`POST /api/models/llm/generate` accepts `model`, `endpoint` (`text` or
+`multimodal`), `messages`, and optional `parameters`, then returns a normalized
+`requestId`, `content`, `contentParts`, `finishReason`, and `usage` response.
+The default `DASHSCOPE_HTTP_BASE_URL` uses the native Bailian generation paths.
+When it points at a Bailian `/compatible-mode/v1` endpoint, the adapter uses
+`/chat/completions` and keeps the same response contract. `DASHSCOPE_API_KEY`
+is required at request time and is never logged or persisted.
+
 ## Technology boundaries
 
 - `web`: HTTP and WebSocket adapters only.
