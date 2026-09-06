@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: babelflux-backend
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+  rabbitmq:
+    addresses: ${RABBITMQ_URL:amqp://localhost:5672}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URL:http://localhost:9200}
+
+server:
+  port: ${SERVER_PORT:8000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+babelflux:
+  api-prefix: /api
+  cors-origins: ${FRONTEND_ORIGINS:http://localhost:5173,http://localhost:5175}
+  infrastructure:
+    redis-enabled: ${REDIS_ENABLED:false}
+    rabbitmq-enabled: ${RABBITMQ_ENABLED:false}
+    elasticsearch-enabled: ${ELASTICSEARCH_ENABLED:false}
+  dashscope:
+    api-key: ${DASHSCOPE_API_KEY:}
+    workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
+    base-url: ${DASHSCOPE_HTTP_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
+    request-timeout: ${DASHSCOPE_REQUEST_TIMEOUT_SECONDS:30s}

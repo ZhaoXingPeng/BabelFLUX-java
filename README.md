@@ -27,7 +27,7 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 
 > BabelFlux / 巴别流 同传把英语等外语的**单向音频流**实时翻译成中文，以**双语字幕 / 语音**呈现，并能在传译过程中**自动纠正**已经输出的识别/翻译错误。面向演讲、技术分享、国际会议与网课等「跟不上、听不懂、来不及记」的场景。
 >
-> 黑客松选题二的完整实现：BabelFlux Web 工作台 + 巴别流 同传桌面悬浮窗 + FastAPI 后端 + 阿里云百炼真实模型链路。
+> 黑客松选题二的完整实现：BabelFlux Web 工作台 + 巴别流 同传桌面悬浮窗 + Spring Boot 后端 + 阿里云百炼真实模型链路。
 
 ---
 
@@ -75,6 +75,10 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 | 实时纠偏（低延迟） | `qwen-flash`（`REALTIME_REVISION_MODEL`） |
 | 会后完整纠偏（强模型） | `qwen-plus`（`FINAL_CORRECTION_MODEL`，可换 `qwen3-max` / `deepseek-v4-pro`） |
 | 语音合成（可选） | `qwen3-tts-flash-realtime`（`TTS_MODEL`，LiveTranslate voice `Tina`） |
+
+### 后端迁移状态
+
+后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器。中间件默认关闭，启用方式和边界见 [backend/README.md](backend/README.md)。实时 DashScope WebSocket 管线和完整报告生成将在后续小 PR 中按现有事件契约逐步迁移。
 
 ### 界面 03 模型策略
 
