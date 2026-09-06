@@ -24,7 +24,8 @@ import org.springframework.stereotype.Repository;
 public class JdbcSessionRepository implements SessionRepository {
     private static final String COLUMNS = "session_id, created_at_epoch, ended_at_epoch, status, "
             + "session_name, source_language, target_language, domain, model_profile, product_mode, "
-            + "input_mode, source_label, segments_json, report_json";
+            + "input_mode, source_label, source_url, source_permission, tts_enabled, glossary_json, "
+            + "segments_json, report_json";
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -41,15 +42,17 @@ public class JdbcSessionRepository implements SessionRepository {
         Object[] values = values(session, segments, report);
         int updated = jdbc.update("update babelflux_sessions set created_at_epoch=?, ended_at_epoch=?, status=?, "
                         + "session_name=?, source_language=?, target_language=?, domain=?, model_profile=?, product_mode=?, "
-                        + "input_mode=?, source_label=?, segments_json=?, report_json=? where session_id=?",
+                        + "input_mode=?, source_label=?, source_url=?, source_permission=?, tts_enabled=?, glossary_json=?, "
+                        + "segments_json=?, report_json=? where session_id=?",
                 valuesForUpdate(values));
         if (updated == 0) {
             try {
-                jdbc.update("insert into babelflux_sessions (" + COLUMNS + ") values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values);
+                jdbc.update("insert into babelflux_sessions (" + COLUMNS + ") values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values);
             } catch (DuplicateKeyException race) {
                 jdbc.update("update babelflux_sessions set created_at_epoch=?, ended_at_epoch=?, status=?, "
                                 + "session_name=?, source_language=?, target_language=?, domain=?, model_profile=?, product_mode=?, "
-                                + "input_mode=?, source_label=?, segments_json=?, report_json=? where session_id=?",
+                                + "input_mode=?, source_label=?, source_url=?, source_permission=?, tts_enabled=?, glossary_json=?, "
+                                + "segments_json=?, report_json=? where session_id=?",
                         valuesForUpdate(values));
             }
         }
@@ -77,7 +80,8 @@ public class JdbcSessionRepository implements SessionRepository {
         return new Object[]{session.getId(), session.getCreatedAt().toEpochMilli(), epoch(session.getEndedAt()),
                 session.getStatus(), session.getSessionName(), session.getSourceLanguage(), session.getTargetLanguage(),
                 session.getDomain(), session.getModelProfile(), session.getProductMode(), session.getInputMode(),
-                session.getSourceLabel(), segments, report};
+                session.getSourceLabel(), session.getSourceUrl(), session.getSourcePermission(), session.isTtsEnabled(),
+                writeJson(session.getGlossary()), segments, report};
     }
 
     private static Object[] valuesForUpdate(Object[] values) {
@@ -94,8 +98,20 @@ public class JdbcSessionRepository implements SessionRepository {
         return Session.restore(row.getString("session_id"), createdAt, endedAt, row.getString("status"),
                 row.getString("session_name"), row.getString("source_language"), row.getString("target_language"),
                 row.getString("domain"), row.getString("model_profile"), row.getString("product_mode"),
-                row.getString("input_mode"), row.getString("source_label"), readSegments(row.getString("segments_json")),
+                row.getString("input_mode"), row.getString("source_label"), row.getString("source_url"),
+                row.getString("source_permission"), row.getBoolean("tts_enabled"),
+                readGlossary(row.getString("glossary_json")), readSegments(row.getString("segments_json")),
                 readReport(row.getString("report_json")));
+    }
+
+    private List<Session.GlossaryTerm> readGlossary(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            JavaType type = mapper.getTypeFactory().constructCollectionType(List.class, Session.GlossaryTerm.class);
+            return mapper.readValue(json, type);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("stored session glossary is invalid", error);
+        }
     }
 
     private List<Session.Segment> readSegments(String json) {

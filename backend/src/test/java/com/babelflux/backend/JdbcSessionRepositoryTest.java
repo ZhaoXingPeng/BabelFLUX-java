@@ -23,12 +23,15 @@ class JdbcSessionRepositoryTest {
                 + "status varchar(32) not null, session_name varchar(255) not null, source_language varchar(32) not null, "
                 + "target_language varchar(32) not null, domain varchar(128) not null, model_profile varchar(128) not null, "
                 + "product_mode varchar(32) not null, input_mode varchar(64) not null, source_label varchar(512) not null, "
+                + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
+                + "glossary_json text not null, "
                 + "segments_json text not null, report_json text)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
         JdbcSessionRepository repository = new JdbcSessionRepository(jdbc, mapper);
         SessionReportService reports = new SessionReportService();
-        Session session = new Session("jdbc-session", "JDBC test", "en", "zh", "通用",
-                "智能默认", "quick", "demo", "demo");
+        Session session = Session.create("jdbc-session", "JDBC test", "en", "zh", "通用",
+                "智能默认", "quick", "demo", "demo", "https://example.test/audio", "granted", true,
+                java.util.List.of(new Session.GlossaryTerm("API", "接口", 10, "preferred")));
         session.addSegment(new Session.Segment("seg-1", "hello", "你好", 1000, 2000, "final"));
 
         repository.save(session);
@@ -40,6 +43,10 @@ class JdbcSessionRepositoryTest {
         Session restored = repository.findById(session.getId()).orElseThrow();
         assertEquals("ended", restored.getStatus());
         assertEquals("你好", restored.getSegments().getFirst().translationText());
+        assertEquals("https://example.test/audio", restored.getSourceUrl());
+        assertEquals("granted", restored.getSourcePermission());
+        assertTrue(restored.isTtsEnabled());
+        assertEquals("接口", restored.getGlossary().getFirst().targetTerm());
         assertEquals(session.getReport().reportId(), restored.getReport().reportId());
         assertEquals(1, restored.getReport().metrics().segments());
 

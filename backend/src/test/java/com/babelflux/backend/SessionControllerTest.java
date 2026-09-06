@@ -31,8 +31,39 @@ class SessionControllerTest {
     }
 
     @Test
+    void preservesExtendedSessionConfiguration() throws Exception {
+        String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"inputMode\":\"browser_audio\",\"sourceLanguage\":\"auto\","
+                                + "\"targetLanguage\":\"zh\",\"sourceUrl\":\"https://example.test/live\","
+                                + "\"sourcePermission\":\"granted\",\"ttsEnabled\":true,"
+                                + "\"glossary\":[{\"sourceTerm\":\"API\",\"targetTerm\":\"接口\","
+                                + "\"priority\":4}]}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String sessionId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).get("sessionId").asText();
+        var session = sessions.get(sessionId);
+        org.junit.jupiter.api.Assertions.assertEquals("https://example.test/live", session.getSourceUrl());
+        org.junit.jupiter.api.Assertions.assertEquals("granted", session.getSourcePermission());
+        org.junit.jupiter.api.Assertions.assertTrue(session.isTtsEnabled());
+        org.junit.jupiter.api.Assertions.assertEquals("接口", session.getGlossary().getFirst().targetTerm());
+    }
+
+    @Test
     void healthIsAvailable() throws Exception {
         mockMvc.perform(get("/api/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ok"));
+    }
+
+    @Test
+    void exposesStrategyPlanWithCamelCaseContract() throws Exception {
+        mockMvc.perform(post("/api/models/strategy/plan").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sourceLanguage\":\"en\",\"targetLanguage\":\"zh\","
+                                + "\"domain\":\"技术\",\"ttsEnabled\":true,\"glossary\":[{"
+                                + "\"sourceTerm\":\"API\",\"targetTerm\":\"接口\",\"priority\":2}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.primaryProvider").value("qwen_live_translate"))
+                .andExpect(jsonPath("$.ttsProvider").value("qwen_tts"))
+                .andExpect(jsonPath("$.realtimeRevisionPolicy.windowSegments").value(4))
+                .andExpect(jsonPath("$.liveTranslateSession.event.session.modalities[1]").value("audio"))
+                .andExpect(jsonPath("$.finalCorrectionPrompt").value(org.hamcrest.Matchers.containsString("API -> 接口")));
     }
 
     @Test

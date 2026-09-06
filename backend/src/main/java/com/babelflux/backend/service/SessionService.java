@@ -20,7 +20,13 @@ public class SessionService {
     }
 
     public Session create(CreateSessionRequest request) {
-        var session = new Session(
+        var glossary = request.glossary().stream()
+                .filter(term -> term.sourceTerm() != null && !term.sourceTerm().isBlank()
+                        && term.targetTerm() != null && !term.targetTerm().isBlank())
+                .map(term -> new Session.GlossaryTerm(term.sourceTerm(), term.targetTerm(),
+                        term.priority(), term.note()))
+                .toList();
+        var session = Session.create(
                 UUID.randomUUID().toString(),
                 defaultValue(request.sessionName(), "未命名同传"),
                 defaultValue(request.sourceLanguage(), "auto"),
@@ -29,7 +35,9 @@ public class SessionService {
                 defaultValue(request.modelProfile(), "智能默认"),
                 defaultValue(request.productMode(), "quick"),
                 defaultValue(request.inputMode(), "demo"),
-                defaultValue(request.sourceFileName(), defaultValue(request.sourceKey(), "demo")));
+                defaultValue(request.sourceFileName(), defaultValue(request.sourceKey(), "demo")),
+                request.sourceUrl(), defaultValue(request.sourcePermission(), "idle"),
+                Boolean.TRUE.equals(request.ttsEnabled()), glossary);
         return repository.save(session);
     }
 
