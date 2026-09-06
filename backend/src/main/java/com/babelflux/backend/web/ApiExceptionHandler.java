@@ -9,6 +9,7 @@ import com.babelflux.backend.provider.dashscope.DashScopeClient.ConfigurationExc
 import com.babelflux.backend.provider.dashscope.DashScopeClient.InvalidRequestException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.TimeoutException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.UpstreamException;
+import com.babelflux.backend.search.ReportSearchUnavailableException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -24,6 +25,13 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ReportNotReadyException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Map<String, String> reportNotReady(ReportNotReadyException error) { return Map.of("detail", error.getMessage()); }
+
+    @ExceptionHandler(ReportSearchUnavailableException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> reportSearchUnavailable(
+            ReportSearchUnavailableException error) {
+        return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", error.getMessage()));
+    }
 
     @ExceptionHandler(UnsupportedReportFormatException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)

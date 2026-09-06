@@ -45,3 +45,13 @@ create table if not exists babelflux_session_event_receipts (
     session_id varchar(64) not null,
     received_at timestamp not null default current_timestamp
 );
+
+create table if not exists babelflux_report_index_jobs (
+    report_id varchar(128) primary key,
+    payload text not null,
+    status varchar(16) not null,
+    attempts integer not null default 0,
+    next_attempt_at timestamp not null,
+    last_error varchar(1000),
+    updated_at timestamp not null default current_timestamp
+);
