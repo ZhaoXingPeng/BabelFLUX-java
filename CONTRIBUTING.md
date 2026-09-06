@@ -81,7 +81,7 @@ PR 评论用于持续记录实验，不要只在最后一次提交里补一段�
 
 最小门禁包括：
 
-- Backend：`ruff check .`、`python -m pytest -q`
+- Backend：`mvn -B test`
 - Frontend：`npm run test`、`npm run build`
 - Desktop：`npm run build`
 

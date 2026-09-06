@@ -7,19 +7,19 @@
 ```text
 Web/Desktop adapters
         |
-API + WebSocket contract (app/api, models/events.py)
+Spring MVC + raw WebSocket adapters (web, websocket)
         |
-Orchestration (services/pipeline.py)
+Application orchestration (service)
         |
-Domain services (session store, revision, report, media)
-        |
-Provider adapters (services/providers/*)
+Domain aggregate and ports (domain)
+        ^
+Infrastructure / provider adapters (infrastructure, messaging, search, provider)
 ```
 
-- `app/api` 只负责协议适配、认证和生命周期编排，不承载字幕算法。
-- `models/events.py` 是前后端事件契约的单一事实源；新增字段必须同时更新前端类型和契约测试。
-- `services/pipeline.py` 负责时序和状态机；纯文本转换、媒体解析、报告生成应放在独立模块。
-- provider 只能通过稳定的领域接口向上提供能力，不能把第三方 SDK 类型泄漏到 API 或前端。
+- `web` 和 `websocket` 只负责协议适配、输入校验和鉴权，不承载字幕算法或数据库访问。
+- `domain` 的 `Session`、报告和端口是业务契约；新增事件字段必须同时更新 Java 映射、前端类型和契约测试。
+- `service` 负责会话时序、媒体输入、纠偏和报告编排；媒体解码、provider 调用和索引写入放在独立适配器。
+- `provider`、`infrastructure`、`messaging`、`search` 只能通过稳定端口向应用层提供能力，不能把第三方 SDK 类型泄漏到 API 或前端。
 - `frontend` 和 `desktop` 共享协议类型语义，但不能直接依赖后端实现细节。
 
 ## 依赖方向
@@ -37,9 +37,9 @@ Provider adapters (services/providers/*)
 
 当前拆分队列：
 
-- `backend/app/services/pipeline.py`：source text normalization -> display alignment -> session orchestration。
+- `backend/src/main/.../service/RealtimeSessionRunner.java`：provider 事件归一化 -> 段落状态 -> 报告编排。
 - `frontend/src/stores/session.ts`：WebSocket transport -> session reducer -> report/history state。
-- `backend/app/api/ws.py`：连接生命周期 -> inbound command handling -> outbound event serialization。
+- `backend/src/main/.../websocket/SessionWebSocketHandler.java`：连接生命周期 -> inbound command handling -> outbound serialization。
 
 ## 事件契约
 
@@ -59,4 +59,3 @@ Provider adapters (services/providers/*)
 ## 变更记录模板
 
 架构调整至少记录：背景、约束、方案、替代方案、风险、迁移步骤、验证结果和回滚方式。小型调整可直接写入 PR；跨模块调整应新增 `docs/adr/NNNN-<topic>.md`。
-
