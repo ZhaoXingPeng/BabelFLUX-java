@@ -68,6 +68,19 @@ public class SessionTokenService {
                 && (purpose == null || purpose.equals(ticket.get().purposeOrDefault()));
     }
 
+    /** Validate a model-gateway credential without requiring the caller to know a session id. */
+    public boolean validAny(String token) {
+        cleanup();
+        if (token == null || token.isBlank()) return false;
+        try {
+            Optional<WebSocketTicket> ticket = redis == null
+                    ? Optional.ofNullable(tokens.get(token)) : redis.findWebSocket(token);
+            return ticket.isPresent() && ticket.get().expiresAt().isAfter(Instant.now(clock));
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
+    }
+
     public HandoffTicket issueHandoff(String sessionId, String source, String sourceLanguage,
                                       String targetLanguage, String displayMode) {
         cleanup();

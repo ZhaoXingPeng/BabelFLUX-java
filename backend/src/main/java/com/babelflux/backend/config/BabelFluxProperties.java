@@ -8,12 +8,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class BabelFluxProperties {
     private String apiPrefix = "/api";
     private List<String> corsOrigins = new ArrayList<>();
+    private boolean requireModelGatewayAuth;
     private Infrastructure infrastructure = new Infrastructure();
 
     public String getApiPrefix() { return apiPrefix; }
     public void setApiPrefix(String apiPrefix) { this.apiPrefix = apiPrefix; }
     public List<String> getCorsOrigins() { return corsOrigins; }
     public void setCorsOrigins(List<String> corsOrigins) { this.corsOrigins = corsOrigins; }
+    public boolean isRequireModelGatewayAuth() { return requireModelGatewayAuth; }
+    public void setRequireModelGatewayAuth(boolean requireModelGatewayAuth) {
+        this.requireModelGatewayAuth = requireModelGatewayAuth;
+    }
     public Infrastructure getInfrastructure() { return infrastructure; }
     public void setInfrastructure(Infrastructure infrastructure) { this.infrastructure = infrastructure; }
 
