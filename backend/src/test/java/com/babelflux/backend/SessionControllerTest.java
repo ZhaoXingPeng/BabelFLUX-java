@@ -98,6 +98,20 @@ class SessionControllerTest {
     }
 
     @Test
+    void rejectsUnknownHandoffDisplayMode() throws Exception {
+        String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sessionName\":\"handoff-validation\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String sessionId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).get("sessionId").asText();
+
+        mockMvc.perform(post("/api/sessions/" + sessionId + "/handoff")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayMode\":\"admin\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("displayMode")));
+    }
+
+    @Test
     void generatesReportAndExportsAllSupportedFormats() throws Exception {
         String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sessionName\":\"报告测试\",\"sourceLanguage\":\"en\",\"targetLanguage\":\"zh\"}"))

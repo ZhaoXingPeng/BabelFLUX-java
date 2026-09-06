@@ -10,6 +10,8 @@ import com.babelflux.backend.web.dto.CreateSessionResponse;
 import com.babelflux.backend.web.dto.SessionHistoryEntry;
 import com.babelflux.backend.service.SessionTokenService.HandoffTicket;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
@@ -63,7 +65,7 @@ public class SessionController {
     }
 
     @PostMapping("/{id}/handoff")
-    public HandoffResponse issueHandoff(@PathVariable String id, @RequestBody HandoffRequest request) {
+    public HandoffResponse issueHandoff(@PathVariable String id, @Valid @RequestBody HandoffRequest request) {
         Session session = service.get(id);
         request = request == null ? new HandoffRequest(null, null, null, null) : request;
         HandoffTicket ticket = tokens.issueHandoff(session.getId(), request.source(),
@@ -90,7 +92,10 @@ public class SessionController {
 
     private static String value(String value) { return value == null ? "" : value; }
 
-    public record HandoffRequest(String source, String sourceLanguage, String targetLanguage, String displayMode) {}
+    public record HandoffRequest(@Size(max = 128) String source,
+                                 @Size(max = 32) String sourceLanguage,
+                                 @Size(max = 32) String targetLanguage,
+                                 @Pattern(regexp = "^(bilingual|translation-only|floating|compact)?$") String displayMode) {}
     public record ClaimHandoffRequest(String token) {}
     public record HandoffResponse(String handoffToken, java.time.Instant expiresAt, String deepLinkUrl) {}
     public record ClaimHandoffResponse(String sessionId, String wsUrl, String wsToken, String source,
