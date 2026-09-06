@@ -118,6 +118,15 @@ public class Session {
         endedAt = Instant.now();
     }
     public void addSegment(Segment segment) { segments.add(segment); }
+    public synchronized void upsertSegment(Segment segment) {
+        for (int index = 0; index < segments.size(); index++) {
+            if (segments.get(index).segmentId().equals(segment.segmentId())) {
+                segments.set(index, segment);
+                return;
+            }
+        }
+        segments.add(segment);
+    }
 
     public record GlossaryTerm(String sourceTerm, String targetTerm, int priority, String note) {}
 
