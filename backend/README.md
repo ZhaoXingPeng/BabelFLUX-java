@@ -83,10 +83,16 @@ an atomic Redis script, so a load-balanced instance can validate tickets
 without silently falling back to process-local state. Redis failure is
 reported as `503`.
 
-Enable RabbitMQ or Elasticsearch explicitly with `RABBITMQ_ENABLED=true` or
-`ELASTICSEARCH_ENABLED=true` after provisioning the corresponding service;
-their application-level responsibilities are tracked as separate migration
-slices.
+With `RABBITMQ_ENABLED=true`, session creation and report completion append
+versioned events to the MySQL outbox in the same transaction as the aggregate
+write. A scheduled relay publishes them to the durable
+`babelflux.session.events` exchange and retries failed deliveries. Consumers
+record `event_id` receipts in MySQL, making broker redelivery idempotent; bad
+messages are routed to the durable dead-letter queue. The checked-in tests use
+H2 and mocks only, so they do not claim a live RabbitMQ verification.
+
+Enable Elasticsearch explicitly with `ELASTICSEARCH_ENABLED=true` after
+provisioning it; report indexing/search remains a separate migration slice.
 
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.

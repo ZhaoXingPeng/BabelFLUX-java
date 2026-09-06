@@ -9,5 +9,7 @@ import org.springframework.stereotype.Component;
 public class RabbitEventPublisher implements EventPublisher {
     private final RabbitTemplate rabbit;
     public RabbitEventPublisher(RabbitTemplate rabbit) { this.rabbit = rabbit; }
-    @Override public void publish(String topic, String payload) { rabbit.convertAndSend(topic, payload); }
+    @Override public void publish(String topic, String payload) {
+        rabbit.convertAndSend(RabbitMessagingConfiguration.EXCHANGE, topic, payload);
+    }
 }
