@@ -104,7 +104,15 @@ public class SessionTokenService {
             throw new TokenStateUnavailableException(error);
         }
         return switch (result.status()) {
-            case CLAIMED -> result.ticket();
+            case CLAIMED -> {
+                HandoffTicket ticket = result.ticket();
+                // Redis TTL and the service clock can cross the boundary between the
+                // atomic script and this JVM; keep the public 410 contract authoritative.
+                if (ticket == null || !ticket.expiresAt().isAfter(Instant.now(clock))) {
+                    throw new HandoffTokenException("expired");
+                }
+                yield ticket;
+            }
             case USED -> throw new HandoffTokenException("used");
             case EXPIRED -> throw new HandoffTokenException("expired");
             case NOT_FOUND -> throw new HandoffTokenException("not_found");
