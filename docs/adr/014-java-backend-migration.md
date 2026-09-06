@@ -35,16 +35,17 @@ protocol in one runtime.
 ## Consequences
 
 The service is runnable without infrastructure and can be validated against the
-unchanged frontend. The Java realtime path handles browser PCM input and report
-generation; URL/file ffmpeg decoding and provider fallback parity remain
-separate migration slices. MySQL is the optional aggregate source of truth,
+unchanged frontend. The Java realtime path handles browser PCM input, URL ffmpeg
+decoding and report generation; file-upload ffmpeg decoding and provider fallback
+parity remain separate migration slices. MySQL is the optional aggregate source
+of truth,
 Redis stores expiring handoff/WebSocket tickets, RabbitMQ uses a durable
 outbox, and Elasticsearch is a rebuildable report index. No unmeasured
 performance claim or automatic reconnect claim is made.
 
 ## Verification
 
-`mvn -B test` passes (51 tests, 2 Docker-backed integration tests skipped when
+`mvn -B test` passes (61 tests, 2 Docker-backed integration tests skipped when
 their opt-in flags are absent). A local live smoke test verified health/session
 flows and a real DashScope WebSocket handshake received
 `session.created`/`session.updated`/`session.finished` without an error event;

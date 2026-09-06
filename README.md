@@ -96,7 +96,8 @@ Java 后端的 WebSocket 接受 16 kHz 单声道 PCM；当前迁移边界如下�
 
 | 模式 | 入口 |
 | --- | --- |
-| `url` / `upload_video` / `upload_audio` | Java 后端尚未迁移 Python 的 ffmpeg 解码管线；需先由客户端采集 PCM |
+| `url` | Java runner 通过受限 `ffmpeg` 解码 HTTP(S) 直链为 16 kHz 单声道 PCM；支持 host 白名单和保留地址阻断 |
+| `upload_video` / `upload_audio` | 前端播放本地媒体元素并采集其音频为 PCM；不上传文件到 Java 后端，避免画面与模型输入双时钟 |
 | `microphone` / `system_audio` / `screen_window` / `browser_audio` | 前端 / 桌面用 AudioWorklet 采集为 16k 单声道 PCM，经 WS 二进制帧推送 |
 | `media_element_audio` | 本地视频/音频在浏览器播放，前端采集媒体元素音频为 PCM 后推送 |
 | `demo` | 无 API key 时使用本地演示事件流 |
@@ -191,11 +192,11 @@ POST /api/models/tts/speech
 
 ```text
 .
-├── backend/                 FastAPI 后端服务
-│   ├── app/api/             health / sessions / model_gateway / ws
-│   ├── app/services/        media / pipeline / revision / report / handoff / providers
-│   ├── scripts/             真实模型链路与在线直链联调脚本
-│   └── tests/               后端单元与契约测试
+├── backend/                 Java 21 + Spring Boot 3.4 后端服务
+│   ├── src/main/.../web     REST / WebSocket 适配器
+│   ├── src/main/.../service 会话、媒体、纠偏与报告编排
+│   ├── src/main/.../provider DashScope HTTP / WebSocket 适配器
+│   └── src/test/            单元、契约与边界测试
 ├── frontend/                Vue 3 + Vite + Pinia Web 工作台
 │   ├── public/fixtures/     默认测试视频与字幕素材
 │   └── src/                 组件、状态、输入源、字幕视图与报告下载
@@ -227,7 +228,7 @@ POST /api/models/tts/speech
 ## 测试与验证
 
 ```bash
-cd backend && mvn -B test              # Java 后端单元/契约测试（51 passed，2 Docker IT skipped）
+cd backend && mvn -B test              # Java 后端单元/契约测试（61 passed，2 Docker IT skipped）
 cd frontend && npx vue-tsc --noEmit    # 前端类型检查
 cd desktop && npx vue-tsc --noEmit     # 桌面类型检查
 cd desktop && npm run client:build     # 桌面 release exe，验证 deep link 实际运行包
@@ -241,7 +242,7 @@ Java 后端的真实 provider 探活只验证了 DashScope WebSocket 的静音�
 - `frontend/src/components/workbench/FloatingCaption.test.ts` —— 验证悬浮字幕关闭按钮、内嵌确认层、取消/确认事件和 Tauri 拖拽区隔离。
 - `frontend/src/App.test.ts` —— 覆盖会话初始化、报告历史、播放控制、TTS、上传媒体与 fixture 同传状态。
 
-Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控制、MySQL/Redis/RabbitMQ/ES 适配器契约和纠偏降级路径；URL/文件的后端 ffmpeg 解码仍是明确的后续迁移项。历史 Python 联调记录见 [`docs/backend/实现总览与联调备份_AI同声传译.md`](docs/backend/实现总览与联调备份_AI同声传译.md)。
+Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控制、URL 媒体 ffmpeg 解码、MySQL/Redis/RabbitMQ/ES 适配器契约和纠偏降级路径；本地上传文件仍由前端媒体元素采集后推送 PCM。历史 Python 联调记录见 [`docs/backend/实现总览与联调备份_AI同声传译.md`](docs/backend/实现总览与联调备份_AI同声传译.md)。
 
 ---
 
@@ -255,7 +256,7 @@ Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控�
 
 ## 当前状态
 
-BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话、实时 PCM、双层纠偏、报告导出和可选中间件链路；桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。后续可按需扩展：URL/文件 ffmpeg 解码、多目标语种、TTS 回放队列优化和更多模型供应商路由。
+BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话、实时 PCM、URL 媒体输入、双层纠偏、报告导出和可选中间件链路；桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。后续可按需扩展：批量文件处理、多目标语种、TTS 回放队列优化和更多模型供应商路由。
 
 ## 工程规范入口
 
