@@ -1,6 +1,8 @@
 package com.babelflux.backend.web;
 
 import com.babelflux.backend.service.SessionService.SessionNotFoundException;
+import com.babelflux.backend.service.SessionService.ReportNotReadyException;
+import com.babelflux.backend.service.ReportExportService.UnsupportedReportFormatException;
 import com.babelflux.backend.service.SessionTokenService.HandoffTokenException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -13,6 +15,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(SessionNotFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Map<String, String> notFound(SessionNotFoundException error) { return Map.of("detail", error.getMessage()); }
+
+    @ExceptionHandler(ReportNotReadyException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public Map<String, String> reportNotReady(ReportNotReadyException error) { return Map.of("detail", error.getMessage()); }
+
+    @ExceptionHandler(UnsupportedReportFormatException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> unsupportedReport(UnsupportedReportFormatException error) { return Map.of("detail", error.getMessage()); }
 
     @ExceptionHandler(HandoffTokenException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> handoff(HandoffTokenException error) {

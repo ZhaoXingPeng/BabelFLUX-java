@@ -17,6 +17,7 @@ public class Session {
     private volatile String productMode;
     private volatile String inputMode;
     private volatile String sourceLabel;
+    private volatile SessionReport report;
     private final List<Segment> segments = new CopyOnWriteArrayList<>();
 
     public Session(String id, String sessionName, String sourceLanguage, String targetLanguage,
@@ -47,7 +48,10 @@ public class Session {
     public String getProductMode() { return productMode; }
     public String getInputMode() { return inputMode; }
     public String getSourceLabel() { return sourceLabel; }
+    public SessionReport getReport() { return report; }
     public List<Segment> getSegments() { return List.copyOf(segments); }
+
+    public synchronized void attachReport(SessionReport report) { this.report = report; }
 
     public synchronized void start() {
         if ("created".equals(status)) status = "running";

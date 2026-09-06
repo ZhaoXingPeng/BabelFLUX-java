@@ -1,8 +1,10 @@
 package com.babelflux.backend.web;
 
 import com.babelflux.backend.domain.Session;
+import com.babelflux.backend.domain.SessionReport;
 import com.babelflux.backend.service.SessionService;
 import com.babelflux.backend.service.SessionTokenService;
+import com.babelflux.backend.service.ReportExportService;
 import com.babelflux.backend.web.dto.CreateSessionRequest;
 import com.babelflux.backend.web.dto.CreateSessionResponse;
 import com.babelflux.backend.web.dto.SessionHistoryEntry;
@@ -10,6 +12,11 @@ import com.babelflux.backend.service.SessionTokenService.HandoffTicket;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +24,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -25,10 +33,12 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class SessionController {
     private final SessionService service;
     private final SessionTokenService tokens;
+    private final ReportExportService exports;
 
-    public SessionController(SessionService service, SessionTokenService tokens) {
+    public SessionController(SessionService service, SessionTokenService tokens, ReportExportService exports) {
         this.service = service;
         this.tokens = tokens;
+        this.exports = exports;
     }
 
     @PostMapping
@@ -87,9 +97,30 @@ public class SessionController {
                                        java.time.Instant expiresAt) {}
 
     @GetMapping("/{id}/report")
-    public ResponseEntity<?> report(@PathVariable String id) {
-        Session session = service.get(id);
-        if (session.getStatus().equals("created") || session.getStatus().equals("running")) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(Map.of("reportId", session.getId(), "sessionId", session.getId(), "sessionName", session.getSessionName(), "segments", session.getSegments()));
+    public SessionReport report(@PathVariable String id) {
+        return service.report(id);
+    }
+
+    @GetMapping("/{id}/report/download")
+    public ResponseEntity<byte[]> download(@PathVariable String id,
+                                           @RequestParam(defaultValue = "txt") String format) {
+        SessionReport report = service.report(id);
+        ReportExportService.ExportedReport exported = exports.export(report, format);
+        String filename = safeFilename(report.sessionName()) + "." + exported.extension();
+        MediaType mediaType = switch (exported.extension()) {
+            case "json" -> MediaType.APPLICATION_JSON;
+            case "srt" -> MediaType.parseMediaType("application/x-subrip");
+            default -> MediaType.TEXT_PLAIN;
+        };
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(mediaType);
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(filename, StandardCharsets.UTF_8).build());
+        return new ResponseEntity<>(exported.body().getBytes(StandardCharsets.UTF_8), headers, HttpStatus.OK);
+    }
+
+    private static String safeFilename(String value) {
+        String cleaned = (value == null ? "" : value).replaceAll("[^\\p{L}\\p{N}._() -]", "").trim();
+        return cleaned.isBlank() ? "report" : cleaned;
     }
 }
