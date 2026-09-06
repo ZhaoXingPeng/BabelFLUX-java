@@ -23,6 +23,7 @@ public class Session {
     private final List<GlossaryTerm> glossary = new CopyOnWriteArrayList<>();
     private volatile SessionReport report;
     private final List<Segment> segments = new CopyOnWriteArrayList<>();
+    private final List<Revision> revisions = new CopyOnWriteArrayList<>();
 
     public Session(String id, String sessionName, String sourceLanguage, String targetLanguage,
                    String domain, String modelProfile, String productMode, String inputMode,
@@ -105,6 +106,7 @@ public class Session {
     public List<GlossaryTerm> getGlossary() { return List.copyOf(glossary); }
     public SessionReport getReport() { return report; }
     public List<Segment> getSegments() { return List.copyOf(segments); }
+    public List<Revision> getRevisions() { return List.copyOf(revisions); }
 
     public synchronized void attachReport(SessionReport report) { this.report = report; }
 
@@ -127,9 +129,13 @@ public class Session {
         }
         segments.add(segment);
     }
+    public void addRevision(Revision revision) { if (revision != null) revisions.add(revision); }
 
     public record GlossaryTerm(String sourceTerm, String targetTerm, int priority, String note) {}
 
     public record Segment(String segmentId, String sourceText, String translationText,
                           long startMs, long endMs, String status) {}
+
+    public record Revision(String segmentId, String beforeText, String afterText,
+                           String reason, double confidence) {}
 }

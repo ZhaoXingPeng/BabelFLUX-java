@@ -8,7 +8,7 @@
 | 1. 基础骨架 | Java 21/Spring Boot、REST、WebSocket、会话领域模型 | `mvn -B test`、HTTP/WS smoke |
 | 2. 协议 parity | 全量 session/history/report/handoff DTO 与契约测试 | 前端 fixture + MockMvc |
 | 3. 百炼实时链路 | DashScope realtime WS、PCM 背压、结束时有界 drain | fake provider、真实握手联调记录（未宣称自动重连或性能提升） |
-| 4. 纠偏与报告 | 有界滑动窗口、异步纠偏、报告生成和降级 | 正确性、P95、错误率 |
+| 4. 纠偏与报告 | 有界滑动窗口、后台实时纠偏、会后 qwen 纠偏、报告生成和超时降级 | 51 项 Java 测试；真实 LiveTranslate 静音握手；未宣称翻译质量或性能提升 |
 | 5. 持久化与检索 | MySQL 聚合持久化、Redis 会话/幂等、RabbitMQ 事件、ES 报告检索 | 容灾、并发和索引基准 |
 | 6. 发布收口 | CI、镜像、观测、回滚演练 | 发布报告与 PR 评论 |
 

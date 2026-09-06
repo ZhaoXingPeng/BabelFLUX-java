@@ -27,8 +27,8 @@ public class ModelStrategyService {
                         "Prefer deterministic glossary and final-result replacements before LLM.",
                         "Do not revise more than the configured per-minute limit."), 6);
         return new StrategyPlanResponse(
-                "注意：本策略计划为设计蓝图，gummy/fun_asr provider 当前未接入真实管线；"
-                        + "实时纠偏窗口与当前 RealtimeReviser 保持一致，会后纠偏仍由报告阶段执行。",
+                "注意：本策略计划固定选择已接入的百炼 LiveTranslate + qwen 纠偏链路；"
+                        + "gummy/fun_asr provider 仍仅作为后续回退方案，不会被静默切换。",
                 primary, fallback, FUN_ASR, request.ttsEnabled() ? QWEN_TTS : null,
                 liveTranslateSession(request), gummyConfig(request), policy,
                 finalCorrectionPrompt(request));

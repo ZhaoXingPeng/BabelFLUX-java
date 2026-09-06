@@ -39,3 +39,16 @@ babelflux:
     workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
     base-url: ${DASHSCOPE_HTTP_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
     request-timeout: ${DASHSCOPE_REQUEST_TIMEOUT_SECONDS:30s}
+    live-translate-model: ${LIVE_TRANSLATE_MODEL:qwen3.5-livetranslate-flash-realtime}
+    live-translate-asr-model: ${LIVE_TRANSLATE_ASR_MODEL:qwen3-asr-flash-realtime}
+    realtime-revision-model: ${REALTIME_REVISION_MODEL:qwen-flash}
+    final-correction-model: ${FINAL_CORRECTION_MODEL:qwen-plus}
+    fast-realtime-revision-model: ${FAST_REALTIME_REVISION_MODEL:qwen-flash}
+    fast-final-correction-model: ${FAST_FINAL_CORRECTION_MODEL:qwen-flash}
+    accurate-realtime-revision-model: ${ACCURATE_REALTIME_REVISION_MODEL:qwen-plus}
+    accurate-final-correction-model: ${ACCURATE_FINAL_CORRECTION_MODEL:qwen-plus}
+    cost-realtime-revision-model: ${COST_REALTIME_REVISION_MODEL:qwen-flash}
+    cost-final-correction-model: ${COST_FINAL_CORRECTION_MODEL:qwen-flash}
+    final-correction-timeout: ${FINAL_CORRECTION_TIMEOUT_SECONDS:30s}
+    realtime-revision-window-segments: ${REALTIME_REVISION_WINDOW_SEGMENTS:4}
+    realtime-revision-max-per-minute: ${REALTIME_REVISION_MAX_PER_MINUTE:6}

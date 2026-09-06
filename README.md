@@ -54,7 +54,7 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 - 本地测试视频扩展为中文 / 英文两套素材；上传英文视频时保留用户设置，同时允许自动检测源语言，避免译文单词黏连。
 - 媒体播放控制修正：演示视频支持稳定暂停 / 继续，上传视频暂停后可继续播放；播放器默认音量调整为 50%。
 - TTS 播报链路优化了媒体元素采集时机、音量和中断处理，减少吃字与下一句提前打断上一句的问题。
-- 报告生成改为先产出基础 TXT / SRT / Markdown / JSON，再异步补全会后完整纠偏；短视频不再因为强模型纠偏等待而阻塞基础文件下载。
+- 报告生成接入会后完整纠偏状态、终稿和修订记录；LLM 超时、异常或未配置时自动回退实时译文，仍可生成可下载报告。
 
 ---
 
@@ -78,45 +78,44 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 
 ### 后端迁移状态
 
-后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；RabbitMQ 事件 outbox、ES 报告检索与 MySQL 事实源边界已落地。实时链路已接入百炼 LiveTranslate：服务端维护 1 秒有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
+后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；RabbitMQ 事件 outbox、ES 报告检索与 MySQL 事实源边界已落地。实时链路已接入百炼 LiveTranslate：服务端维护 1 秒有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，在线纠偏在后台复核有界窗口，会后纠偏带超时和降级，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
 
 ### 界面 03 模型策略
 
-同传设置里的 `03 模型策略` 当前是产品层选项，会随会话 payload 记录为 `modelProfile`，但尚未接入真实 provider 路由或自动换模。真实管线目前按后端环境变量固定选择：实时链路使用 `qwen3.5-livetranslate-flash-realtime` + `qwen3-asr-flash-realtime`；在线纠偏使用 `qwen-flash` 的近 4 句窗口；会后完整纠偏使用 `qwen-plus`。`智能默认`、`快速低延迟`、`高准确`、`成本优先`、`指定供应商` 仍是 UI 占位，`gummy` / `fun_asr` 等 provider 回退未实现。
+同传设置里的 `03 模型策略` 会随会话 payload 记录为 `modelProfile`，并用于选择实时/会后纠偏模型 profile；实时主链路仍按环境变量固定为 `qwen3.5-livetranslate-flash-realtime` + `qwen3-asr-flash-realtime`。`快速低延迟` 默认使用 `qwen-flash`，`高准确` 默认使用 `qwen-plus`，`成本优先` 默认使用 `qwen-flash`；`gummy` / `fun_asr` 等 provider 回退仍未实现。
 
 ### 专业领域
 
-专业领域选项已进入后端会话并影响纠偏 prompt。当前支持 `通用`、`技术`、`商务`、`教育`、`医疗`、`法律`、`自定义术语表`；不同领域会改变实时纠偏和会后纠偏的关注点，例如技术领域优先保留 API、框架、模型、论文名，商务领域更谨慎处理公司、职位、货币和指标，医疗/法律领域会保守处理剂量、症状、条款、责任类表述。领域选项不会替换实时识别翻译模型，主要作用在 `backend/app/services/revision.py` 的纠偏提示词与术语处理。
+专业领域选项已进入后端会话并影响纠偏 prompt。当前支持 `通用`、`技术`、`商务`、`教育`、`医疗`、`法律`、`自定义术语表`；不同领域会改变实时纠偏和会后纠偏的关注点，例如技术领域优先保留 API、框架、模型、论文名，商务领域更谨慎处理公司、职位、货币和指标，医疗/法律领域会保守处理剂量、症状、条款、责任类表述。领域选项不会替换实时识别翻译模型，主要作用在 `backend/src/main/java/com/babelflux/backend/service/RealtimeRevisionService.java` 和 `FinalCorrectionService.java` 的纠偏提示词与术语处理。
 
 ---
 
 ## 输入源
 
-后端按会话 `inputMode` 选择音频入口（`backend/app/api/ws.py`）：
+Java 后端的 WebSocket 接受 16 kHz 单声道 PCM；当前迁移边界如下：
 
 | 模式 | 入口 |
 | --- | --- |
-| `url` | 后端用 ffmpeg 从在线直链解码并喂入 |
+| `url` / `upload_video` / `upload_audio` | Java 后端尚未迁移 Python 的 ffmpeg 解码管线；需先由客户端采集 PCM |
 | `microphone` / `system_audio` / `screen_window` / `browser_audio` | 前端 / 桌面用 AudioWorklet 采集为 16k 单声道 PCM，经 WS 二进制帧推送 |
 | `media_element_audio` | 本地视频/音频在浏览器播放，前端采集媒体元素音频为 PCM 后推送 |
-| `demo` | `DEMO_MEDIA_PATH` 指向的样例媒体，或 mock 事件流 |
+| `demo` | 无 API key 时使用本地演示事件流 |
 
-> 采集类音源在浏览器/WebView 内用 `AudioContext({sampleRate:16000})` 原生重采样到 16k，分帧约 100ms 推流；前端在后端管线就绪（收到首个 `source_sync_state`）后才开始推送，避免早期帧丢弃。
+> 采集类音源在浏览器/WebView 内用 `AudioContext({sampleRate:16000})` 原生重采样到 16k，分帧约 100ms 推流；前端在 WebSocket 建立后推送，Java runner 以 1 秒有界队列承接并施加背压。
 
 ---
 
 ## 本地启动
 
-> 依赖：Python 3.11+、Node 20.19+、Rust stable（桌面端）、WebView2（Windows）。`ffmpeg` 可放在系统 PATH，也可放在仓库同级 `tools/` 目录，后端会自动递归查找 `ffmpeg.exe` / `ffprobe.exe`。
+> 依赖：Java 21、Maven、Node 20.19+、Rust stable（桌面端）、WebView2（Windows）。MySQL、Redis、RabbitMQ、Elasticsearch 按需启用。
 
 ### 后端
 
 ```bash
-cp .env.example .env        # 默认 MODEL_PROVIDER=mock，可零配额跑通全链路
-./scripts/dev-backend.sh    # uvicorn app.main:app  ->  http://localhost:8000
+./scripts/dev-backend.sh    # Spring Boot -> http://localhost:8000
 ```
 
-接入**真实模型**：在 `.env` 设 `MODEL_PROVIDER=real` 并填 `DASHSCOPE_API_KEY`。如使用百炼业务空间，再填 `DASHSCOPE_WORKSPACE_ID`。其余模型名已给默认值，通常无需改动。
+接入**真实模型**：设置 `DASHSCOPE_API_KEY`；如使用百炼业务空间，再设置 `DASHSCOPE_WORKSPACE_ID`。其余模型名和纠偏 profile 已在 `backend/src/main/resources/application.yml` 提供默认值。
 
 ### 前端
 
@@ -216,8 +215,8 @@ POST /api/models/tts/speech
 | --- | --- | --- |
 | Web 工作台 | Vue 3、Vite、TypeScript、Pinia | 实时同传界面状态多、更新频繁，Vue 组合式 API + Pinia 适合把会话、字幕、报告、输入源拆成清晰状态；Vite 保证开发调试快，TypeScript 降低 WebSocket 事件和报告结构的维护成本。 |
 | 字幕交互 | GSAP、CSS、@vueuse/core、@floating-ui/vue、video.js | 字幕流需要平滑入场、纠偏高亮、悬浮定位和媒体预览控制；这些库覆盖动画、浏览器能力封装、浮层定位与播放器能力，不需要为常见交互重新造轮子。 |
-| 后端服务 | FastAPI、uvicorn、asyncio、pydantic、httpx、websockets、aiofiles | 同传链路核心是长连接事件流和异步媒体处理，FastAPI + asyncio 能同时处理 WebSocket、模型流、文件解码和报告生成；pydantic 让前后端事件契约保持稳定。 |
-| 媒体解码 | ffmpeg | 在线直链格式不可控，ffmpeg 是跨格式解码最稳妥的基础设施，可统一转为 16k 单声道 PCM 喂给实时模型。 |
+| 后端服务 | Java 21、Spring Boot 3.4、Maven、虚拟线程、JDBC | 长连接事件流由 WebSocket runner 编排；领域服务、provider adapter 和持久化端口分层，便于测试和替换。会后纠偏在事务挂起边界内执行，超时自动降级。 |
+| 数据与中间件 | MySQL、Redis、RabbitMQ、Elasticsearch | MySQL 保存会话事实与 outbox，Redis 保存带 TTL 的票据，RabbitMQ 负责可重试事件，ES 作为可重建报告索引；默认关闭以保持本地可运行。 |
 | 桌面悬浮窗 | Tauri v2、Vue 3、deep-link、global-shortcut、store 插件 | 桌面端需要轻量、透明置顶、快捷键和 Web 会话接管；Tauri 复用前端技术栈，同时比传统 Electron 包体更小，适合演示和后续分发。 |
 | 模型链路 | 阿里云百炼 DashScope、LiveTranslate、qwen-flash、qwen-plus、qwen-tts | LiveTranslate 提供实时 ASR + 翻译低延迟链路；qwen-flash 用于在线跨句纠偏，qwen-plus 负责会后全局校正，按任务强度拆模型可以兼顾速度、成本和最终质量。 |
 
@@ -228,23 +227,21 @@ POST /api/models/tts/speech
 ## 测试与验证
 
 ```bash
-cd backend && python -m pytest        # 后端单元/契约测试
+cd backend && mvn -B test              # Java 后端单元/契约测试（51 passed，2 Docker IT skipped）
 cd frontend && npx vue-tsc --noEmit    # 前端类型检查
 cd desktop && npx vue-tsc --noEmit     # 桌面类型检查
 cd desktop && npm run client:build     # 桌面 release exe，验证 deep link 实际运行包
 ```
 
-链路联调脚本（`backend/scripts/`，需 `PYTHONPATH=. python3`）：
-
-- `prove_realtime_revision.py` —— 用真实模型证明实时纠偏「该纠必纠、干净零误纠」
-- `e2e_online_url.py <直链> [秒]` —— 在线直链端到端：识别/翻译/纠偏/报告 + 四格式下载
+Java 后端的真实 provider 探活只验证了 DashScope WebSocket 的静音握手（收到
+`session_ready` / `session_finished`，无错误）；没有据此宣称翻译质量、音频输出或性能提升。
 
 前端重点回归：
 
 - `frontend/src/components/workbench/FloatingCaption.test.ts` —— 验证悬浮字幕关闭按钮、内嵌确认层、取消/确认事件和 Tauri 拖拽区隔离。
 - `frontend/src/App.test.ts` —— 覆盖会话初始化、报告历史、播放控制、TTS、上传媒体与 fixture 同传状态。
 
-实测要点：在线视频/音频直链全链路通过，实时纠偏在真实内容触发（如量词「几位」纠正为「几件」），会后报告四格式 200 可下载。完整实现与联调结论见 [`docs/backend/实现总览与联调备份_AI同声传译.md`](docs/backend/实现总览与联调备份_AI同声传译.md)。
+Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控制、MySQL/Redis/RabbitMQ/ES 适配器契约和纠偏降级路径；URL/文件的后端 ffmpeg 解码仍是明确的后续迁移项。历史 Python 联调记录见 [`docs/backend/实现总览与联调备份_AI同声传译.md`](docs/backend/实现总览与联调备份_AI同声传译.md)。
 
 ---
 
@@ -258,7 +255,7 @@ cd desktop && npm run client:build     # 桌面 release exe，验证 deep link �
 
 ## 当前状态
 
-BabelFlux / 巴别流 同传已落地为可演示的端到端系统：真实模型链路打通，实时 + 会后双层纠偏可用，多源输入、桌面悬浮窗、会话报告历史与四格式导出齐备。桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。后续可按需扩展：更细的 VAD 分段、多目标语种、TTS 回放队列优化和更多模型供应商路由。
+BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话、实时 PCM、双层纠偏、报告导出和可选中间件链路；桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。后续可按需扩展：URL/文件 ffmpeg 解码、多目标语种、TTS 回放队列优化和更多模型供应商路由。
 
 ## 工程规范入口
 

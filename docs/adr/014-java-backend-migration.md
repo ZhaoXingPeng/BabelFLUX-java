@@ -27,19 +27,24 @@ protocol in one runtime.
   explicit timeouts.
 - The realtime runner owns a bounded one-second PCM queue, maps provider
   partial/final events to the existing WebSocket contract, and persists segment
-  progress before report generation. `demo` input remains an explicit local
+  progress before report generation. Online qwen correction reviews a bounded
+  window in a background virtual thread; final qwen correction runs with a
+  timeout and deterministic fallback. `demo` input remains an explicit local
   fallback when no provider key is configured.
 
 ## Consequences
 
 The service is runnable without infrastructure and can be validated against the
-unchanged frontend. Media decoding and revision parity remain separate slices;
-the realtime Java path currently handles browser PCM input and report
-generation, with no unmeasured performance claim or automatic reconnect claim.
+unchanged frontend. The Java realtime path handles browser PCM input and report
+generation; URL/file ffmpeg decoding and provider fallback parity remain
+separate migration slices. MySQL is the optional aggregate source of truth,
+Redis stores expiring handoff/WebSocket tickets, RabbitMQ uses a durable
+outbox, and Elasticsearch is a rebuildable report index. No unmeasured
+performance claim or automatic reconnect claim is made.
 
 ## Verification
 
-`mvn -B test` passes (47 tests, 2 Docker-backed integration tests skipped when
+`mvn -B test` passes (51 tests, 2 Docker-backed integration tests skipped when
 their opt-in flags are absent). A local live smoke test verified health/session
 flows and a real DashScope WebSocket handshake received
 `session.created`/`session.updated`/`session.finished` without an error event;

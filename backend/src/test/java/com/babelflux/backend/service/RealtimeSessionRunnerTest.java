@@ -21,8 +21,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 class RealtimeSessionRunnerTest {
     @Test
@@ -57,6 +59,8 @@ class RealtimeSessionRunnerTest {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");
         properties.setBaseUrl("https://dashscope.aliyuncs.com/api/v1");
+        properties.setLiveTranslateModel("custom-live-model");
+        properties.setLiveTranslateAsrModel("custom-asr-model");
         SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
                 mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
         Session session = Session.create("live-run", "live", "en", "zh", "通用", "默认",
@@ -94,6 +98,11 @@ class RealtimeSessionRunnerTest {
         assertEquals("Hello world", session.getSegments().getFirst().sourceText());
         assertEquals("你好世界", session.getSegments().getFirst().translationText());
         assertTrue(events.stream().anyMatch(event -> "session_report".equals(event.get("type"))));
+        ArgumentCaptor<DashScopeRealtimeClient.Request> request =
+                ArgumentCaptor.forClass(DashScopeRealtimeClient.Request.class);
+        verify(realtime).connect(request.capture());
+        assertEquals("custom-live-model", request.getValue().model());
+        assertEquals("custom-asr-model", request.getValue().asrModel());
         runner.shutdown();
     }
 

@@ -89,6 +89,12 @@ The runner uses virtual threads and a bounded final drain; it does not claim an
 automatic reconnect policy or a latency improvement without a reproducible
 benchmark.
 
+Online correction reviews the latest bounded window in a background task and
+emits `status=revised` plus a `revision_event` only for high-confidence changes.
+At session end, `qwen-plus` (or the selected profile) performs a full-report
+correction with a timeout; malformed, failed, or unconfigured calls fall back
+to the live translation while preserving a visible correction status.
+
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
 is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC
 session repository (the default remains in-memory/H2); it persists session

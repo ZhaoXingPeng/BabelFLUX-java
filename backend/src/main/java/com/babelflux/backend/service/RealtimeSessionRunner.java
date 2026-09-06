@@ -7,6 +7,8 @@ import com.babelflux.backend.provider.dashscope.DashScopeRealtimeClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +19,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 
@@ -30,13 +33,21 @@ public class RealtimeSessionRunner {
     private final DashScopeRealtimeClient realtime;
     private final DashScopeProperties properties;
     private final SessionService sessions;
+    private final RealtimeRevisionService revisions;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public RealtimeSessionRunner(DashScopeRealtimeClient realtime, DashScopeProperties properties,
                                  SessionService sessions) {
+        this(realtime, properties, sessions, null);
+    }
+
+    @Autowired
+    public RealtimeSessionRunner(DashScopeRealtimeClient realtime, DashScopeProperties properties,
+                                 SessionService sessions, RealtimeRevisionService revisions) {
         this.realtime = realtime;
         this.properties = properties;
         this.sessions = sessions;
+        this.revisions = revisions;
     }
 
     public RunHandle start(Session session, Sink sink) {
@@ -62,6 +73,9 @@ public class RealtimeSessionRunner {
         private final List<SegmentState> roots = new ArrayList<>();
         private final Map<String, SegmentState> byItem = new LinkedHashMap<>();
         private final Map<String, SegmentState> byResponse = new LinkedHashMap<>();
+        private final Deque<Long> revisionCalls = new ArrayDeque<>();
+        private final AtomicBoolean revisionInFlight = new AtomicBoolean();
+        private final List<Future<?>> revisionTasks = new ArrayList<>();
         private volatile boolean paused;
         private volatile Future<?> future;
         private int segmentNumber;
@@ -135,8 +149,10 @@ public class RealtimeSessionRunner {
 
         private void runLive() throws Exception {
             DashScopeRealtimeClient.Request request = new DashScopeRealtimeClient.Request(
-                    "qwen3.5-livetranslate-flash-realtime", sourceLanguage(), session.getTargetLanguage(),
-                    "qwen3-asr-flash-realtime", session.isTtsEnabled(), "Tina", 16_000, glossary());
+                    value(properties.getLiveTranslateModel(), "qwen3.5-livetranslate-flash-realtime"),
+                    sourceLanguage(), session.getTargetLanguage(),
+                    value(properties.getLiveTranslateAsrModel(), "qwen3-asr-flash-realtime"),
+                    session.isTtsEnabled(), "Tina", 16_000, glossary());
             try (DashScopeRealtimeClient.LiveSession provider = realtime.connect(request)) {
                 emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
                         "status", "syncing", "lagMs", 0, "message", "正在连接百炼同传引擎")));
@@ -229,7 +245,58 @@ public class RealtimeSessionRunner {
             if (state.translationFinal && !state.source.isBlank()) {
                 session.upsertSegment(new Session.Segment(state.id, state.source, state.translation,
                         state.startMs, state.endMs, "final"));
+                scheduleRevision();
             }
+        }
+
+        private void scheduleRevision() {
+            if (revisions == null || properties.getApiKey() == null || properties.getApiKey().isBlank()
+                    || session.getSegments().size() < 2 || !allowRevisionCall()
+                    || !revisionInFlight.compareAndSet(false, true)) return;
+            List<Session.Segment> snapshot = session.getSegments();
+            Future<?> task = executor.submit(() -> {
+                try {
+                    for (RealtimeRevisionService.Revision revision : revisions.review(session, snapshot)) {
+                        applyRevision(revision);
+                    }
+                } catch (Exception ignored) {
+                    // Realtime correction is advisory and must never stop the audio stream.
+                } finally {
+                    revisionInFlight.set(false);
+                }
+            });
+            synchronized (revisionTasks) { revisionTasks.add(task); }
+        }
+
+        private boolean allowRevisionCall() {
+            long now = System.nanoTime();
+            while (!revisionCalls.isEmpty() && now - revisionCalls.peekFirst() > TimeUnit.MINUTES.toNanos(1)) {
+                revisionCalls.removeFirst();
+            }
+            int limit = Math.max(0, properties.getRealtimeRevisionMaxPerMinute());
+            if (revisionCalls.size() >= limit) return false;
+            revisionCalls.addLast(now);
+            return true;
+        }
+
+        private void applyRevision(RealtimeRevisionService.Revision revision) {
+            Session.Segment current = session.getSegments().stream()
+                    .filter(segment -> revision.segmentId().equals(segment.segmentId())).findFirst().orElse(null);
+            if (current == null || !value(current.translationText()).equals(revision.beforeText())) return;
+            session.upsertSegment(new Session.Segment(current.segmentId(), current.sourceText(),
+                    revision.afterText(), current.startMs(), current.endMs(), "revised"));
+            session.addRevision(new Session.Revision(revision.segmentId(), revision.beforeText(),
+                    revision.afterText(), revision.reason(), revision.confidence()));
+            sessions.saveProgress(session);
+            emitQuietly(Map.of("type", "translation_segment", "segment", Map.of(
+                    "segmentId", revision.segmentId(), "text", revision.afterText(),
+                    "language", session.getTargetLanguage(), "startMs", current.startMs(),
+                    "endMs", current.endMs(), "status", "revised")));
+            emitQuietly(Map.of("type", "revision_event", "revision", Map.of(
+                    "revisionId", session.getId() + "-rev-" + System.nanoTime(),
+                    "segmentId", revision.segmentId(), "beforeText", revision.beforeText(),
+                    "afterText", revision.afterText(), "reason", revision.reason(),
+                    "confidence", revision.confidence())));
         }
 
         private void emitAudio(DashScopeRealtimeClient.NormalizedEvent event) {
@@ -275,6 +342,7 @@ public class RealtimeSessionRunner {
         private void finalizeSession() {
             if (!ended.compareAndSet(false, true)) return;
             try {
+                awaitRevisions();
                 sessions.saveProgress(session);
                 SessionReport report = sessions.finish(session.getId());
                 emit(Map.of("type", "session_report", "reportId", report.reportId(),
@@ -284,11 +352,27 @@ public class RealtimeSessionRunner {
             }
         }
 
+        private void awaitRevisions() {
+            List<Future<?>> tasks;
+            synchronized (revisionTasks) { tasks = List.copyOf(revisionTasks); }
+            long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+            for (Future<?> task : tasks) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) break;
+                try { task.get(remaining, TimeUnit.NANOSECONDS); }
+                catch (Exception ignored) { task.cancel(true); }
+            }
+        }
+
         private void emit(Map<String, Object> event) throws Exception { sink.emit(event); }
         private void emitQuietly(Map<String, Object> event) { try { emit(event); } catch (Exception ignored) { } }
     }
 
     private static long frameDurationMs(byte[] pcm) { return Math.max(0L, pcm.length * 1000L / (16_000L * 2L)); }
+    private static String value(String value) { return value == null ? "" : value; }
+    private static String value(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
     private record AudioFrame(byte[] pcm, boolean end) {}
     private static final class SegmentState {
         private final String id;
