@@ -44,6 +44,21 @@ class SessionTokenServiceTest {
     }
 
     @Test
+    void rejectsRedisClaimThatExpiresBeforeJvmValidation() {
+        RedisSessionRepository redis = mock(RedisSessionRepository.class);
+        Instant now = Instant.parse("2026-09-07T00:05:01Z");
+        SessionTokenService tokens = new SessionTokenService(Clock.fixed(now, ZoneId.of("UTC")), redis);
+        SessionTokenService.HandoffTicket expired = new SessionTokenService.HandoffTicket(
+                "h_expired", "session-redis", null, "en", "zh", "bilingual", now.minusSeconds(1));
+        when(redis.claimHandoff("h_expired")).thenReturn(
+                new RedisSessionRepository.ClaimResult(RedisSessionRepository.Status.CLAIMED, expired));
+
+        SessionTokenService.HandoffTokenException error = assertThrows(
+                SessionTokenService.HandoffTokenException.class, () -> tokens.claimHandoff("h_expired"));
+        assertEquals("expired", error.getCode());
+    }
+
+    @Test
     void writesWebSocketTicketToRedisForCrossInstanceValidation() {
         RedisSessionRepository redis = mock(RedisSessionRepository.class);
         Instant now = Instant.parse("2026-09-07T00:00:00Z");
