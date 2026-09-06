@@ -41,8 +41,11 @@ return `404`.
 mvn -B test
 ```
 
-The current suite covers health/session history plus one-time handoff issue,
-claim, replay rejection, and malformed-token handling.
+The current suite covers health/session history, one-time handoff issue/claim,
+JDBC and Redis state boundaries, Rabbit outbox delivery semantics, and ES
+search contracts. Docker-backed RabbitMQ and Elasticsearch checks are
+explicitly opt-in with `RUN_RABBITMQ_IT=true` and
+`RUN_ELASTICSEARCH_IT=true`.
 
 ## DashScope gateway
 
