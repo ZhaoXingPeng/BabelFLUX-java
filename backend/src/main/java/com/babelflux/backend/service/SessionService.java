@@ -81,6 +81,8 @@ public class SessionService {
     }
 
     public Session get(String id) { return repository.findById(id).orElseThrow(() -> new SessionNotFoundException(id)); }
+    @Transactional
+    public Session saveProgress(Session session) { return repository.save(session); }
     public List<Session> list() { return repository.findAll().stream().sorted(Comparator.comparing(Session::getCreatedAt).reversed()).toList(); }
     public void delete(String id) { if (!repository.deleteById(id)) throw new SessionNotFoundException(id); }
 

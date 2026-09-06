@@ -22,18 +22,25 @@ protocol in one runtime.
   `EventPublisher` and `ReportSearchIndexer` are ports.
 - In-memory session storage is the local default. Redis, RabbitMQ and
   Elasticsearch adapters are configuration-gated for deployment environments.
-- DashScope access is isolated behind `DashScopeClient`; credentials are read
-  from environment-backed configuration and requests have explicit timeouts.
+- DashScope access is isolated behind HTTP and realtime WebSocket clients;
+  credentials are read from environment-backed configuration and requests have
+  explicit timeouts.
+- The realtime runner owns a bounded one-second PCM queue, maps provider
+  partial/final events to the existing WebSocket contract, and persists segment
+  progress before report generation. `demo` input remains an explicit local
+  fallback when no provider key is configured.
 
 ## Consequences
 
-The first slice is runnable without infrastructure and can be validated against
-the unchanged frontend. Realtime DashScope WebSocket ingestion, media decoding,
-revision and report generation remain separate migration slices so each can be
-tested and rolled back independently.
+The service is runnable without infrastructure and can be validated against the
+unchanged frontend. Media decoding and revision parity remain separate slices;
+the realtime Java path currently handles browser PCM input and report
+generation, with no unmeasured performance claim or automatic reconnect claim.
 
 ## Verification
 
-`mvn -B test` passes. A live smoke test verified health, session creation,
-history retrieval and WebSocket `session_started` -> `source_sync_state` ->
-`session_report` event order.
+`mvn -B test` passes (47 tests, 2 Docker-backed integration tests skipped when
+their opt-in flags are absent). A local live smoke test verified health/session
+flows and a real DashScope WebSocket handshake received
+`session.created`/`session.updated`/`session.finished` without an error event;
+audio/text generation was not claimed from a silent probe.

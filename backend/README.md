@@ -13,8 +13,10 @@ mvn spring-boot:run
 
 The default server is `http://localhost:8000`. The migration slice provides
 `GET /api/health`, session creation/history APIs, and
-`/api/ws/sessions/{sessionId}`. Binary PCM frames are accepted by the socket;
-DashScope realtime ingestion is implemented in the next slice.
+`/api/ws/sessions/{sessionId}`. The socket authenticates a short-lived token,
+accepts 16 kHz mono PCM binary frames, and delegates the bounded stream to the
+DashScope LiveTranslate client. `inputMode=demo` remains a local fallback; a
+real session requires `DASHSCOPE_API_KEY`.
 
 Session creation preserves `sourceUrl`, `sourcePermission`, `ttsEnabled`, and
 the priority-ordered `glossary` fields used by the unchanged Vue client.
@@ -42,8 +44,9 @@ mvn -B test
 ```
 
 The current suite covers health/session history, one-time handoff issue/claim,
-JDBC and Redis state boundaries, Rabbit outbox delivery semantics, and ES
-search contracts. Docker-backed RabbitMQ and Elasticsearch checks are
+JDBC and Redis state boundaries, Rabbit outbox delivery semantics, ES search
+contracts, realtime provider normalization, bounded runner behavior, and
+WebSocket authentication/audio control. Docker-backed RabbitMQ and Elasticsearch checks are
 explicitly opt-in with `RUN_RABBITMQ_IT=true` and
 `RUN_ELASTICSEARCH_IT=true`.
 
@@ -75,7 +78,16 @@ test sends credentials or audio to a real provider.
 - `infrastructure`: in-memory baseline and optional Redis adapter.
 - `messaging`: `EventPublisher` port with RabbitMQ adapter.
 - `search`: report indexing port with Elasticsearch adapter.
-- `provider`: Alibaba Cloud Bailian (DashScope) HTTP adapter.
+- `provider`: Alibaba Cloud Bailian (DashScope) HTTP and realtime WebSocket adapters.
+
+The realtime runner maps provider events to the existing
+`transcript_segment`, `translation_segment`, `audio_segment`, and
+`session_report` contract. Source partials are merged as either full snapshots
+or incremental stashes, response IDs bind translations/audio to a segment, and
+the PCM queue drops the oldest frame when its one-second bound is exceeded.
+The runner uses virtual threads and a bounded final drain; it does not claim an
+automatic reconnect policy or a latency improvement without a reproducible
+benchmark.
 
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
 is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC
