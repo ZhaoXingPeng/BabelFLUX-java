@@ -30,6 +30,11 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     public void afterConnectionEstablished(WebSocketSession socket) throws Exception {
         String id = pathVariable(socket, "sessionId");
         String token = query(socket, "token");
+        if (token == null || token.isBlank()) {
+            send(socket, Map.of("type", "error", "message", "Missing WebSocket token"));
+            socket.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
         if (!tokens.valid(id, token)) {
             send(socket, Map.of("type", "error", "message", "Invalid WebSocket token"));
             socket.close(CloseStatus.POLICY_VIOLATION);
