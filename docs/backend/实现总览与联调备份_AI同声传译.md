@@ -1,5 +1,7 @@
 # AI 同声传译助手（BabelFlux / 巴别流 同传）— 实现总览与联调备份
 
+> 历史说明：本文保留早期 Python/FastAPI 实现的联调备份。当前可运行后端已迁移到独立的 Java 21 + Spring Boot 工作区；请以 [`backend/README.md`](../../backend/README.md) 和 [`docs/adr/014-java-backend-migration.md`](../adr/014-java-backend-migration.md) 的 Java 边界、测试和中间件说明为准。本文中的 `backend/app`、Python 命令和旧测试数量不再是当前工作区的启动方式。
+
 > 本文档对项目「重要实现」做一次完整备份：系统架构、模型全链路与选型、实时/会后双层纠偏、
 > 音频采集（Web + 桌面）、会话报告、WebSocket 协议、桌面悬浮窗、真实链路联调发现并修复的问题、
 > 部署与运行方式、以及已验证的测试结论。便于交接、复盘与回归。

@@ -1,5 +1,7 @@
 # 后端模型链路与选型 · AI 同声传译助手
 
+> 历史说明：本文记录早期 Python/FastAPI 链路的模型实测与设计。当前实现位于独立 Java 21 + Spring Boot 工作区；Java 端的配置、纠偏状态和中间件边界以 [`backend/README.md`](../../backend/README.md) 为准。
+
 > 本文记录 BabelFlux / 巴别流 同传后端真实管线接入阿里云百炼（DashScope）的
 > 凭据/端点策略、全链路模型选型（含实测结论）、实时纠偏与会后完整纠偏的设计，
 > 以及三种音频入口与统一前后端 WebSocket 事件协议。所有“已实测”结论均通过
