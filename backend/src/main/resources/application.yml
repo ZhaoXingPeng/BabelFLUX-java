@@ -1,6 +1,11 @@
 spring:
   application:
     name: babelflux-backend
+  datasource:
+    url: ${MYSQL_URL:jdbc:h2:mem:babelflux;DB_CLOSE_DELAY=-1}
+    username: ${MYSQL_USERNAME:sa}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: ${MYSQL_DRIVER:org.h2.Driver}
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
@@ -25,6 +30,7 @@ babelflux:
     redis-enabled: ${REDIS_ENABLED:false}
     rabbitmq-enabled: ${RABBITMQ_ENABLED:false}
     elasticsearch-enabled: ${ELASTICSEARCH_ENABLED:false}
+    mysql-enabled: ${MYSQL_ENABLED:false}
   dashscope:
     api-key: ${DASHSCOPE_API_KEY:}
     workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
