@@ -23,8 +23,15 @@ public class Session {
     public Session(String id, String sessionName, String sourceLanguage, String targetLanguage,
                    String domain, String modelProfile, String productMode, String inputMode,
                    String sourceLabel) {
+        this(id, Instant.now(), sessionName, sourceLanguage, targetLanguage, domain,
+                modelProfile, productMode, inputMode, sourceLabel);
+    }
+
+    private Session(String id, Instant createdAt, String sessionName, String sourceLanguage,
+                    String targetLanguage, String domain, String modelProfile, String productMode,
+                    String inputMode, String sourceLabel) {
         this.id = id;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt;
         this.status = "created";
         this.sessionName = sessionName;
         this.sourceLanguage = sourceLanguage;
@@ -34,6 +41,20 @@ public class Session {
         this.productMode = productMode;
         this.inputMode = inputMode;
         this.sourceLabel = sourceLabel;
+    }
+
+    public static Session restore(String id, Instant createdAt, Instant endedAt, String status,
+                                  String sessionName, String sourceLanguage, String targetLanguage,
+                                  String domain, String modelProfile, String productMode,
+                                  String inputMode, String sourceLabel, List<Segment> segments,
+                                  SessionReport report) {
+        Session session = new Session(id, createdAt, sessionName, sourceLanguage, targetLanguage,
+                domain, modelProfile, productMode, inputMode, sourceLabel);
+        session.endedAt = endedAt;
+        session.status = status;
+        if (segments != null) session.segments.addAll(segments);
+        session.report = report;
+        return session;
     }
 
     public String getId() { return id; }

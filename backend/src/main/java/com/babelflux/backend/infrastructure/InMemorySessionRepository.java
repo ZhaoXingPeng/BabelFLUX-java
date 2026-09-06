@@ -8,10 +8,12 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.springframework.context.annotation.Primary;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Repository;
 
 @Repository
 @Primary
+@ConditionalOnProperty(prefix = "babelflux.infrastructure", name = "mysql-enabled", havingValue = "false", matchIfMissing = true)
 public class InMemorySessionRepository implements SessionRepository {
     private final ConcurrentMap<String, Session> sessions = new ConcurrentHashMap<>();
 

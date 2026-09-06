@@ -1,6 +1,9 @@
 spring:
   application:
     name: babelflux-backend
+  sql:
+    init:
+      mode: always
   datasource:
     url: ${MYSQL_URL:jdbc:h2:mem:babelflux;DB_CLOSE_DELAY=-1}
     username: ${MYSQL_USERNAME:sa}
