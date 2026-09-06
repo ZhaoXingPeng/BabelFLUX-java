@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class SessionControllerTest {
     @Autowired MockMvc mockMvc;
+    @Autowired com.babelflux.backend.service.SessionService sessions;
 
     @Test
     void createsSessionAndListsHistory() throws Exception {
@@ -52,6 +55,44 @@ class SessionControllerTest {
                 .andExpect(status().isConflict());
         mockMvc.perform(post("/api/sessions/handoff/claim").contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void generatesReportAndExportsAllSupportedFormats() throws Exception {
+        String response = mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sessionName\":\"报告测试\",\"sourceLanguage\":\"en\",\"targetLanguage\":\"zh\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String sessionId = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).get("sessionId").asText();
+
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report"))
+                .andExpect(status().isNotFound());
+
+        sessions.get(sessionId).addSegment(new com.babelflux.backend.domain.Session.Segment(
+                "segment-1", "hello | world", "你好世界", 1234, 2345, "final"));
+        sessions.finish(sessionId);
+
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportId").value(sessionId + "-report"))
+                .andExpect(jsonPath("$.metrics.segments").value(1))
+                .andExpect(jsonPath("$.correctionStatus").value("skipped"))
+                .andExpect(jsonPath("$.segments[0].finalTranslation").value("你好世界"));
+
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report/download?format=txt"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("hello | world")));
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report/download?format=srt"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("00:00:01,234 --> 00:00:02,345")));
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report/download?format=md"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("hello \\| world")));
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report/download?format=json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionId").value(sessionId));
+        mockMvc.perform(get("/api/sessions/" + sessionId + "/report/download?format=csv"))
                 .andExpect(status().isBadRequest());
     }
 }

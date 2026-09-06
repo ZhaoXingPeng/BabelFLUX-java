@@ -54,8 +54,8 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             session.start();
             send(socket, Map.of("type", "source_sync_state", "state", Map.of("status", "listening", "lagMs", 0, "message", "Java backend ready")));
         } else if ("stop_session".equals(type) || "audio_end".equals(type)) {
-            session.end();
-            send(socket, Map.of("type", "session_report", "reportId", session.getId(), "correctionStatus", "skipped"));
+            var report = sessions.finish(id);
+            send(socket, Map.of("type", "session_report", "reportId", report.reportId(), "correctionStatus", report.correctionStatus()));
         } else if ("pause_session".equals(type)) {
             send(socket, Map.of("type", "source_sync_state", "state", Map.of("status", "missing", "lagMs", 0, "message", "会话已暂停")));
         } else if ("resume_session".equals(type)) {
