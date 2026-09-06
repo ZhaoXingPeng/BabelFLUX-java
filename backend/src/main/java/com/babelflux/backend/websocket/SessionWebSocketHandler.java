@@ -10,6 +10,8 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
@@ -65,10 +67,23 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         String id = pathVariable(socket, "sessionId");
         var session = sessions.get(id);
         if ("start_session".equals(type)) {
-            if (runs.containsKey(socket.getId())) return;
-            session.start();
-            RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> send(socket, event));
-            runs.put(socket.getId(), handle);
+            synchronized (runs) {
+                if (runs.containsKey(socket.getId())) return;
+                session.start();
+                AtomicBoolean reportEmitted = new AtomicBoolean();
+                AtomicReference<RealtimeSessionRunner.RunHandle> handleRef = new AtomicReference<>();
+                RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> {
+                    if ("session_report".equals(event.get("type"))) {
+                        reportEmitted.set(true);
+                        RealtimeSessionRunner.RunHandle current = handleRef.get();
+                        if (current != null) runs.remove(socket.getId(), current);
+                    }
+                    send(socket, event);
+                });
+                handleRef.set(handle);
+                runs.put(socket.getId(), handle);
+                if (reportEmitted.get()) runs.remove(socket.getId(), handle);
+            }
         } else if ("stop_session".equals(type) || "audio_end".equals(type)) {
             RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
             if (handle == null) {
