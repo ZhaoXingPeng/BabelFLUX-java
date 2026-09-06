@@ -99,6 +99,19 @@ class SessionWebSocketHandlerTest {
     }
 
     @Test
+    void rejectsUnknownInputModeOverrideBeforeStartingRunner() throws Exception {
+        String token = tokens.issue("ws-1");
+        WebSocketSession socket = socket("ws-1", token);
+
+        handler.afterConnectionEstablished(socket);
+        handler.handleTextMessage(socket, new TextMessage(
+                "{\"type\":\"start_session\",\"inputMode\":\"python_pipeline\"}"));
+
+        assertEquals("error", sent(socket).get("type").asText());
+        verifyNoInteractions(runner);
+    }
+
+    @Test
     void rejectsAudioBeforeSessionStartInsteadOfDroppingFrame() throws Exception {
         String token = tokens.issue("ws-1");
         WebSocketSession socket = socket("ws-1", token);

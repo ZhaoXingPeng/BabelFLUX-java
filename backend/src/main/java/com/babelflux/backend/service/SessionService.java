@@ -10,6 +10,7 @@ import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.search.ReportIndexingPort;
 import com.babelflux.backend.web.dto.CreateSessionRequest;
 import java.util.Comparator;
+import java.util.Set;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class SessionService {
+    private static final Set<String> INPUT_MODES = Set.of("demo", "url", "microphone", "browser_audio",
+            "screen_window", "media_element_audio", "system_audio");
     private final SessionRepository repository;
     private final SessionReportService reports;
     private final BabelFluxProperties properties;
@@ -37,6 +40,10 @@ public class SessionService {
 
     @Transactional
     public Session create(CreateSessionRequest request) {
+        if (request == null) throw new InvalidSessionRequestException("request is required");
+        if (!isSupportedInputMode(request.inputMode())) {
+            throw new InvalidSessionRequestException("unsupported input mode: " + request.inputMode());
+        }
         var glossary = request.glossary().stream()
                 .filter(term -> term.sourceTerm() != null && !term.sourceTerm().isBlank()
                         && term.targetTerm() != null && !term.targetTerm().isBlank())
@@ -98,5 +105,13 @@ public class SessionService {
 
     public static class ReportNotReadyException extends RuntimeException {
         public ReportNotReadyException(String id) { super("report not ready: " + id); }
+    }
+
+    public static boolean isSupportedInputMode(String inputMode) {
+        return inputMode == null || inputMode.isBlank() || INPUT_MODES.contains(inputMode);
+    }
+
+    public static class InvalidSessionRequestException extends RuntimeException {
+        public InvalidSessionRequestException(String message) { super(message); }
     }
 }

@@ -48,6 +48,14 @@ class SessionControllerTest {
     }
 
     @Test
+    void rejectsUnknownInputModeBeforePersistingSession() throws Exception {
+        mockMvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"inputMode\":\"python_pipeline\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("inputMode")));
+    }
+
+    @Test
     void healthIsAvailable() throws Exception {
         mockMvc.perform(get("/api/health")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ok"));
     }

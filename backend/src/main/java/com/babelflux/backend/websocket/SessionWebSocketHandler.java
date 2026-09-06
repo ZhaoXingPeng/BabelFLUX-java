@@ -89,6 +89,12 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         }
         var session = sessions.get(id);
         if ("start_session".equals(type)) {
+            String requestedInputMode = text(payload, "inputMode");
+            if (!SessionService.isSupportedInputMode(requestedInputMode)) {
+                send(socket, Map.of("type", "error", "message",
+                        "暂不支持的输入模式：" + requestedInputMode));
+                return;
+            }
             synchronized (runs) {
                 if (runs.containsKey(socket.getId())) return;
                 session.applyOverrides(text(payload, "sourceLanguage"), text(payload, "targetLanguage"),

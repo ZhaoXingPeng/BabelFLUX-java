@@ -2,6 +2,7 @@ package com.babelflux.backend.web;
 
 import com.babelflux.backend.service.SessionService.SessionNotFoundException;
 import com.babelflux.backend.service.SessionService.ReportNotReadyException;
+import com.babelflux.backend.service.SessionService.InvalidSessionRequestException;
 import com.babelflux.backend.service.ReportExportService.UnsupportedReportFormatException;
 import com.babelflux.backend.service.SessionTokenService.HandoffTokenException;
 import com.babelflux.backend.service.SessionTokenService.TokenStateUnavailableException;
@@ -12,12 +13,29 @@ import com.babelflux.backend.provider.dashscope.DashScopeClient.UpstreamExceptio
 import com.babelflux.backend.search.ReportSearchUnavailableException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(InvalidSessionRequestException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> invalidSession(InvalidSessionRequestException error) {
+        return Map.of("detail", error.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> invalidRequest(MethodArgumentNotValidException error) {
+        String detail = error.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(field -> field.getField() + " " + field.getDefaultMessage())
+                .orElse("invalid request");
+        return Map.of("detail", detail);
+    }
+
     @ExceptionHandler(SessionNotFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Map<String, String> notFound(SessionNotFoundException error) { return Map.of("detail", error.getMessage()); }
