@@ -77,9 +77,14 @@ test sends credentials or audio to a real provider.
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
 is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC
 session repository (the default remains in-memory/H2); it persists session
-metadata, segment JSON, and report snapshots. Enable Redis, RabbitMQ, or
-Elasticsearch explicitly with `REDIS_ENABLED=true`, `RABBITMQ_ENABLED=true`,
-or `ELASTICSEARCH_ENABLED=true` after provisioning the corresponding service;
+metadata, segment JSON, and report snapshots. With `REDIS_ENABLED=true`,
+handoff and WebSocket ticket state is stored with TTL and handoff claims use
+an atomic Redis script, so a load-balanced instance can validate tickets
+without silently falling back to process-local state. Redis failure is
+reported as `503`.
+
+Enable RabbitMQ or Elasticsearch explicitly with `RABBITMQ_ENABLED=true` or
+`ELASTICSEARCH_ENABLED=true` after provisioning the corresponding service;
 their application-level responsibilities are tracked as separate migration
 slices.
 

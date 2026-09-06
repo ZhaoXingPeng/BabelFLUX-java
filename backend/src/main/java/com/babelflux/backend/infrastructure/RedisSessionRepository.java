@@ -1,20 +1,108 @@
 package com.babelflux.backend.infrastructure;
 
-import com.babelflux.backend.domain.Session;
+import com.babelflux.backend.service.SessionTokenService.HandoffTicket;
+import com.babelflux.backend.service.SessionTokenService.WebSocketTicket;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
-/** Redis adapter reserved for multi-instance deployments; domain code depends on SessionRepository. */
+/** Distributed TTL store for handoff and WebSocket authentication tickets. */
 @Component
 @ConditionalOnProperty(prefix = "babelflux.infrastructure", name = "redis-enabled", havingValue = "true")
 public class RedisSessionRepository {
+    private static final String HANDOFF_PREFIX = "babelflux:token:handoff:";
+    private static final String HANDOFF_USED_PREFIX = "babelflux:token:handoff:used:";
+    private static final String WEBSOCKET_PREFIX = "babelflux:token:websocket:";
+    private static final DefaultRedisScript<String> CLAIM_SCRIPT = new DefaultRedisScript<>("local used = redis.call('GET', KEYS[2]) "
+            + "if used then return '__USED__' end "
+            + "local value = redis.call('GET', KEYS[1]) "
+            + "if value then "
+            + "local ttl = redis.call('PTTL', KEYS[1]) "
+            + "if ttl > 0 then redis.call('SET', KEYS[2], '1', 'PX', ttl) end "
+            + "redis.call('DEL', KEYS[1]) "
+            + "redis.call('DEL', KEYS[3]) "
+            + "return '__CLAIMED__' .. value "
+            + "end "
+            + "if redis.call('GET', KEYS[3]) then redis.call('DEL', KEYS[3]); return '__EXPIRED__' end "
+            + "return '__NOT_FOUND__'", String.class);
+
     private final StringRedisTemplate redis;
+    private final ObjectMapper mapper;
 
-    public RedisSessionRepository(StringRedisTemplate redis) { this.redis = redis; }
-
-    public void markRunning(String sessionId) {
-        redis.opsForValue().set("babelflux:session:" + sessionId, "running", Duration.ofHours(24));
+    public RedisSessionRepository(StringRedisTemplate redis, ObjectMapper mapper) {
+        this.redis = redis;
+        this.mapper = mapper;
     }
+
+    public void saveHandoff(HandoffTicket ticket, Duration ttl) {
+        String tokenKey = tokenKey(ticket.token());
+        put(HANDOFF_PREFIX + tokenKey, ticket, ttl);
+        // Keep a short tombstone so an unclaimed, expired ticket can still return 410.
+        put(HANDOFF_USED_PREFIX + "expiry:" + tokenKey, "1", ttl.plusSeconds(60));
+    }
+
+    public ClaimResult claimHandoff(String token) {
+        String tokenKey = tokenKey(token);
+        String value = redis.execute(
+                CLAIM_SCRIPT,
+                java.util.List.of(HANDOFF_PREFIX + tokenKey, HANDOFF_USED_PREFIX + tokenKey,
+                        HANDOFF_USED_PREFIX + "expiry:" + tokenKey));
+        if (value == null || value.equals("__NOT_FOUND__")) return new ClaimResult(Status.NOT_FOUND, null);
+        if (value.equals("__USED__")) return new ClaimResult(Status.USED, null);
+        if (value.equals("__EXPIRED__")) return new ClaimResult(Status.EXPIRED, null);
+        if (value.startsWith("__CLAIMED__")) return new ClaimResult(Status.CLAIMED,
+                read(value.substring("__CLAIMED__".length()), HandoffTicket.class));
+        throw new IllegalStateException("unexpected Redis handoff claim result");
+    }
+
+    public void saveWebSocket(WebSocketTicket ticket, Duration ttl) {
+        put(WEBSOCKET_PREFIX + tokenKey(ticket.token()), ticket, ttl);
+    }
+
+    public Optional<WebSocketTicket> findWebSocket(String token) {
+        if (token == null || token.isBlank()) return Optional.empty();
+        String value = redis.opsForValue().get(WEBSOCKET_PREFIX + tokenKey(token));
+        return value == null ? Optional.empty() : Optional.of(read(value, WebSocketTicket.class));
+    }
+
+    private static String tokenKey(String token) {
+        if (token == null || token.isBlank()) throw new IllegalArgumentException("token is required");
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException error) {
+            throw new IllegalStateException("SHA-256 is unavailable", error);
+        }
+    }
+
+    private void put(String key, Object value, Duration ttl) {
+        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+            throw new IllegalArgumentException("Redis ticket TTL must be positive");
+        }
+        try {
+            redis.opsForValue().set(key, mapper.writeValueAsString(value), ttl);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("token cannot be serialized", error);
+        }
+    }
+
+    private <T> T read(String value, Class<T> type) {
+        try {
+            return mapper.readValue(value, type);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("token state is invalid", error);
+        }
+    }
+
+    public enum Status { CLAIMED, USED, EXPIRED, NOT_FOUND }
+
+    public record ClaimResult(Status status, HandoffTicket ticket) {}
 }

@@ -4,6 +4,7 @@ import com.babelflux.backend.service.SessionService.SessionNotFoundException;
 import com.babelflux.backend.service.SessionService.ReportNotReadyException;
 import com.babelflux.backend.service.ReportExportService.UnsupportedReportFormatException;
 import com.babelflux.backend.service.SessionTokenService.HandoffTokenException;
+import com.babelflux.backend.service.SessionTokenService.TokenStateUnavailableException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.ConfigurationException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.InvalidRequestException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.TimeoutException;
@@ -62,5 +63,12 @@ public class ApiExceptionHandler {
             default -> 400;
         };
         return org.springframework.http.ResponseEntity.status(status).body(Map.of("detail", error.getMessage()));
+    }
+
+    @ExceptionHandler(TokenStateUnavailableException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> tokenStateUnavailable(
+            TokenStateUnavailableException error) {
+        return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", error.getMessage()));
     }
 }

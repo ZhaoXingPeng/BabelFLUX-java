@@ -1,12 +1,16 @@
 package com.babelflux.backend.service;
 
+import com.babelflux.backend.infrastructure.RedisSessionRepository;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -17,22 +21,46 @@ public class SessionTokenService {
     private final Map<String, WebSocketTicket> tokens = new ConcurrentHashMap<>();
     private final Map<String, HandoffTicket> handoffs = new ConcurrentHashMap<>();
     private final Map<String, Instant> usedHandoffs = new ConcurrentHashMap<>();
+    private final RedisSessionRepository redis;
 
     public SessionTokenService() { this(Clock.systemUTC()); }
 
-    SessionTokenService(Clock clock) { this.clock = clock; }
+    @Autowired
+    public SessionTokenService(ObjectProvider<RedisSessionRepository> redisProvider) {
+        this(Clock.systemUTC(), redisProvider.getIfAvailable());
+    }
+
+    SessionTokenService(Clock clock) { this(clock, null); }
+
+    SessionTokenService(Clock clock, RedisSessionRepository redis) {
+        this.clock = clock;
+        this.redis = redis;
+    }
 
     public String issue(String sessionId) {
         cleanup();
         String token = randomToken("w_");
-        tokens.put(token, new WebSocketTicket(sessionId, Instant.now(clock).plus(SESSION_TOKEN_TTL)));
+        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, Instant.now(clock).plus(SESSION_TOKEN_TTL));
+        try {
+            if (redis == null) tokens.put(token, ticket);
+            else redis.saveWebSocket(ticket, SESSION_TOKEN_TTL);
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
         return token;
     }
 
     public boolean valid(String sessionId, String token) {
         cleanup();
-        WebSocketTicket ticket = token == null ? null : tokens.get(token);
-        return ticket != null && ticket.sessionId().equals(sessionId) && ticket.expiresAt().isAfter(Instant.now(clock));
+        Optional<WebSocketTicket> ticket;
+        try {
+            ticket = redis == null ? Optional.ofNullable(token == null ? null : tokens.get(token))
+                    : redis.findWebSocket(token);
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
+        return ticket.isPresent() && ticket.get().sessionId().equals(sessionId)
+                && ticket.get().expiresAt().isAfter(Instant.now(clock));
     }
 
     public HandoffTicket issueHandoff(String sessionId, String source, String sourceLanguage,
@@ -41,12 +69,22 @@ public class SessionTokenService {
         String token = randomToken("h_");
         HandoffTicket ticket = new HandoffTicket(token, sessionId, source, sourceLanguage,
                 targetLanguage, displayMode, Instant.now(clock).plusSeconds(300));
-        handoffs.put(token, ticket);
+        try {
+            if (redis == null) handoffs.put(token, ticket);
+            else redis.saveHandoff(ticket, Duration.ofSeconds(300));
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
         return ticket;
     }
 
-    public synchronized HandoffTicket claimHandoff(String token) {
+    public HandoffTicket claimHandoff(String token) {
         if (token == null || token.isBlank()) throw new HandoffTokenException("invalid");
+        if (redis != null) return claimDistributed(token);
+        return claimLocal(token);
+    }
+
+    private synchronized HandoffTicket claimLocal(String token) {
         cleanupUsedHandoffs();
         if (usedHandoffs.containsKey(token)) throw new HandoffTokenException("used");
         HandoffTicket ticket = handoffs.remove(token);
@@ -58,10 +96,32 @@ public class SessionTokenService {
         return ticket;
     }
 
+    private HandoffTicket claimDistributed(String token) {
+        RedisSessionRepository.ClaimResult result;
+        try {
+            result = redis.claimHandoff(token);
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
+        return switch (result.status()) {
+            case CLAIMED -> result.ticket();
+            case USED -> throw new HandoffTokenException("used");
+            case EXPIRED -> throw new HandoffTokenException("expired");
+            case NOT_FOUND -> throw new HandoffTokenException("not_found");
+        };
+    }
+
     public String issueHandoffWebSocket(String sessionId, Instant expiresAt) {
         cleanup();
         String token = randomToken("w_");
-        tokens.put(token, new WebSocketTicket(sessionId, expiresAt));
+        WebSocketTicket ticket = new WebSocketTicket(token, sessionId, expiresAt);
+        Duration ttl = Duration.between(Instant.now(clock), expiresAt);
+        try {
+            if (redis == null) tokens.put(token, ticket);
+            else if (!ttl.isNegative() && !ttl.isZero()) redis.saveWebSocket(ticket, ttl);
+        } catch (RuntimeException error) {
+            throw new TokenStateUnavailableException(error);
+        }
         return token;
     }
 
@@ -88,11 +148,17 @@ public class SessionTokenService {
                                 String sourceLanguage, String targetLanguage,
                                 String displayMode, Instant expiresAt) {}
 
-    private record WebSocketTicket(String sessionId, Instant expiresAt) {}
+    public record WebSocketTicket(String token, String sessionId, Instant expiresAt) {}
 
     public static class HandoffTokenException extends RuntimeException {
         private final String code;
         public HandoffTokenException(String code) { super("handoff token " + code); this.code = code; }
         public String getCode() { return code; }
+    }
+
+    public static class TokenStateUnavailableException extends RuntimeException {
+        public TokenStateUnavailableException(Throwable cause) {
+            super("token state store unavailable", cause);
+        }
     }
 }
