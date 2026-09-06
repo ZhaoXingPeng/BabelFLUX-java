@@ -4,6 +4,10 @@ import com.babelflux.backend.service.SessionService.SessionNotFoundException;
 import com.babelflux.backend.service.SessionService.ReportNotReadyException;
 import com.babelflux.backend.service.ReportExportService.UnsupportedReportFormatException;
 import com.babelflux.backend.service.SessionTokenService.HandoffTokenException;
+import com.babelflux.backend.provider.dashscope.DashScopeClient.ConfigurationException;
+import com.babelflux.backend.provider.dashscope.DashScopeClient.InvalidRequestException;
+import com.babelflux.backend.provider.dashscope.DashScopeClient.TimeoutException;
+import com.babelflux.backend.provider.dashscope.DashScopeClient.UpstreamException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -23,6 +27,31 @@ public class ApiExceptionHandler {
     @ExceptionHandler(UnsupportedReportFormatException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, String> unsupportedReport(UnsupportedReportFormatException error) { return Map.of("detail", error.getMessage()); }
+
+    @ExceptionHandler(ConfigurationException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> providerConfiguration(ConfigurationException error) {
+        return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", error.getMessage()));
+    }
+
+    @ExceptionHandler(TimeoutException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> providerTimeout(TimeoutException error) {
+        return org.springframework.http.ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
+                .body(Map.of("detail", error.getMessage()));
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> providerRequest(InvalidRequestException error) { return Map.of("detail", error.getMessage()); }
+
+    @ExceptionHandler(UpstreamException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> providerUpstream(UpstreamException error) {
+        Map<String, String> detail = new java.util.LinkedHashMap<>();
+        detail.put("message", error.getMessage());
+        if (error.getCode() != null) detail.put("code", error.getCode());
+        if (error.getRequestId() != null) detail.put("requestId", error.getRequestId());
+        return org.springframework.http.ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(detail);
+    }
 
     @ExceptionHandler(HandoffTokenException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> handoff(HandoffTokenException error) {

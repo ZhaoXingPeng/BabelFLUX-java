@@ -18,4 +18,8 @@ public class DashScopeProperties {
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
     public Duration getRequestTimeout() { return requestTimeout; }
     public void setRequestTimeout(Duration requestTimeout) { this.requestTimeout = requestTimeout; }
+
+    public boolean isOpenAiCompatible() {
+        return baseUrl != null && baseUrl.contains("/compatible-mode/");
+    }
 }
