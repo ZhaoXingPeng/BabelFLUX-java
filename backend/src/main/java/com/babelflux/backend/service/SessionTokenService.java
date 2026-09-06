@@ -75,7 +75,8 @@ public class SessionTokenService {
         try {
             Optional<WebSocketTicket> ticket = redis == null
                     ? Optional.ofNullable(tokens.get(token)) : redis.findWebSocket(token);
-            return ticket.isPresent() && ticket.get().expiresAt().isAfter(Instant.now(clock));
+            return ticket.isPresent() && ticket.get().expiresAt().isAfter(Instant.now(clock))
+                    && "session".equals(ticket.get().purposeOrDefault());
         } catch (RuntimeException error) {
             throw new TokenStateUnavailableException(error);
         }

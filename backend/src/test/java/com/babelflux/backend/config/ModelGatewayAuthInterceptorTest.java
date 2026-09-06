@@ -40,6 +40,23 @@ class ModelGatewayAuthInterceptorTest {
     }
 
     @Test
+    void rejectsDisplayOnlyHandoffTokenForModelCalls() throws Exception {
+        BabelFluxProperties properties = new BabelFluxProperties();
+        properties.setRequireModelGatewayAuth(true);
+        SessionTokenService tokens = new SessionTokenService();
+        var handoff = tokens.issueHandoff("session-1", null, "en", "zh", "bilingual");
+        String displayToken = tokens.issueHandoffWebSocket("session-1", handoff.expiresAt());
+        var interceptor = new WebConfig.ModelGatewayAuthInterceptor(properties, tokens);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setParameter("token", displayToken);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(request, response, new Object()));
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
     void disabledProtectionDoesNotRequireAConfiguredToken() throws Exception {
         var interceptor = new WebConfig.ModelGatewayAuthInterceptor(new BabelFluxProperties(),
                 new SessionTokenService());
