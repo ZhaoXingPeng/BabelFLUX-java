@@ -45,7 +45,7 @@ performance claim or automatic reconnect claim is made.
 
 ## Verification
 
-`mvn -B test` passes (61 tests, 2 Docker-backed integration tests skipped when
+`mvn -B test` passes (64 tests, 2 Docker-backed integration tests skipped when
 their opt-in flags are absent). A local live smoke test verified health/session
 flows and a real DashScope WebSocket handshake received
 `session.created`/`session.updated`/`session.finished` without an error event;
