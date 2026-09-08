@@ -60,6 +60,48 @@ class FinalCorrectionServiceTest {
         service.shutdown();
     }
 
+    @Test
+    void rejectsSignificantlyShorterLongFormCorrection() {
+        DashScopeClient client = mock(DashScopeClient.class);
+        DashScopeProperties properties = configured();
+        when(client.generate(any(), any(), any(), any())).thenReturn(new DashScopeClient.LlmGenerateResponse(
+                "req-2", "qwen-plus", "{" +
+                        "\"segments\":[{\"id\":\"s1\",\"finalTranslation\":\"简短译文。\"}]," +
+                        "\"revisions\":[{\"id\":\"s1\",\"after\":\"简短译文。\"}]}" ,
+                List.of(), "stop", Map.of()));
+        FinalCorrectionService service = new FinalCorrectionService(client, properties, new ObjectMapper());
+        Session session = session();
+        session.upsertSegment(new Session.Segment("s1", "API is stable and complete",
+                "这是一个完整的实时译文，包含编号一二三和报告排序。", 0, 1000, "final"));
+
+        FinalCorrectionService.CorrectionResult result = service.correct(session, session.getSegments());
+
+        assertEquals("partial", result.status());
+        assertTrue(result.finalById().isEmpty());
+        assertTrue(result.error().contains("完整性保护"));
+        assertTrue(result.revisions().isEmpty());
+        service.shutdown();
+    }
+
+    @Test
+    void rejectsSameLengthCorrectionThatDropsLiveContent() {
+        DashScopeClient client = mock(DashScopeClient.class);
+        when(client.generate(any(), any(), any(), any())).thenReturn(new DashScopeClient.LlmGenerateResponse(
+                "req-3", "qwen-plus", "{\"segments\":[{\"id\":\"s1\",\"finalTranslation\":\"第一轮检查完成。\"}]}",
+                List.of(), "stop", Map.of()));
+        FinalCorrectionService service = new FinalCorrectionService(client, configured(), new ObjectMapper());
+        Session session = session();
+        session.upsertSegment(new Session.Segment("s1", "First round checks low latency.",
+                "第一轮检查延迟低。", 0, 1000, "final"));
+
+        FinalCorrectionService.CorrectionResult result = service.correct(session, session.getSegments());
+
+        assertEquals("partial", result.status());
+        assertTrue(result.finalById().isEmpty());
+        assertTrue(result.error().contains("完整性保护"));
+        service.shutdown();
+    }
+
     private static DashScopeProperties configured() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");

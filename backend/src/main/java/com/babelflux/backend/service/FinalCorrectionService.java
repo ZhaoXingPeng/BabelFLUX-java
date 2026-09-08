@@ -23,6 +23,9 @@ import org.springframework.stereotype.Service;
 /** Generates a complete report correction while preserving a deterministic fallback. */
 @Service
 public class FinalCorrectionService {
+    private static final int COMPLETENESS_GUARD_MIN_LENGTH = 8;
+    private static final double COMPLETENESS_GUARD_MIN_RATIO = 0.75;
+    private static final double COMPLETENESS_GUARD_MIN_OVERLAP = 0.70;
     private final DashScopeClient client;
     private final DashScopeProperties properties;
     private final ObjectMapper mapper;
@@ -58,10 +61,16 @@ public class FinalCorrectionService {
                         elapsed(started));
             }
             int missing = segments.size() - parsed.finalById.size();
-            String status = missing == 0 ? "completed" : parsed.finalById.isEmpty() ? "fallback" : "partial";
+            String status = missing == 0 ? "completed"
+                    : parsed.rejectedForCompleteness() > 0 ? "partial"
+                    : parsed.finalById.isEmpty() ? "fallback" : "partial";
             String error = missing == 0 ? "" : "会后完整纠偏返回缺少 " + missing + " 句，缺失句已使用实时译文。";
+            if (parsed.rejectedForCompleteness() > 0) {
+                String safety = "完整性保护拒绝 " + parsed.rejectedForCompleteness() + " 句显著缩短的会后译文，保留实时译文。";
+                error = error.isBlank() ? safety : error + " " + safety;
+            }
             return new CorrectionResult(status, model, parsed.finalById, parsed.revisions, parsed.glossaryHits,
-                    value(parsed.summary()), value(parsed.qualityNotes(), error), error, elapsed(started));
+                    value(parsed.summary()), appendQualityNotes(parsed.qualityNotes(), error), error, elapsed(started));
         } catch (TimeoutException error) {
             task.cancel(true);
             return new CorrectionResult("timeout", model, Map.of(), List.of(), List.of(), "",
@@ -135,13 +144,17 @@ public class FinalCorrectionService {
             Map<String, Session.Segment> byId = new LinkedHashMap<>();
             for (Session.Segment segment : segments) byId.put(segment.segmentId(), segment);
             Map<String, String> finals = new LinkedHashMap<>();
+            int rejectedForCompleteness = 0;
             JsonNode outputSegments = root.path("segments");
             if (outputSegments.isArray()) {
                 for (JsonNode item : outputSegments) {
                     String id = text(item, "id", "segmentId");
                     String translation = text(item, "finalTranslation", "translation");
-                    if (id != null && byId.containsKey(id) && translation != null && !translation.isBlank()) {
-                        finals.put(id, translation.trim());
+                    Session.Segment source = byId.get(id);
+                    if (source != null && translation != null && !translation.isBlank()) {
+                        String candidate = translation.trim();
+                        if (passesCompletenessGuard(source.translationText(), candidate)) finals.put(id, candidate);
+                        else rejectedForCompleteness++;
                     }
                 }
             }
@@ -152,7 +165,8 @@ public class FinalCorrectionService {
                     String id = text(item, "id", "segmentId");
                     Session.Segment segment = byId.get(id);
                     String after = text(item, "after", "afterText");
-                    if (segment == null || after == null || after.isBlank()) continue;
+                    if (segment == null || after == null || after.isBlank()
+                            || !after.trim().equals(finals.get(id))) continue;
                     String before = value(segment.translationText());
                     if (before.equals(after.trim())) continue;
                     revisions.add(new SessionReport.Revision(id, before, after.trim(),
@@ -160,7 +174,7 @@ public class FinalCorrectionService {
                 }
             }
             return new Parsed(finals, revisions, glossaryHits(root.path("glossaryHits")),
-                    text(root, "summary"), text(root, "qualityNotes"));
+                    text(root, "summary"), text(root, "qualityNotes"), rejectedForCompleteness);
         } catch (Exception ignored) {
             return null;
         }
@@ -207,11 +221,44 @@ public class FinalCorrectionService {
     }
 
     private static long elapsed(long started) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started); }
+    private static boolean passesCompletenessGuard(String live, String candidate) {
+        String normalizedLive = compact(live);
+        String normalizedCandidate = compact(candidate);
+        if (normalizedLive.length() < COMPLETENESS_GUARD_MIN_LENGTH) return true;
+        if (normalizedCandidate.length() < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_RATIO)) return false;
+        if (longestCommonSubsequence(normalizedLive, normalizedCandidate)
+                < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_OVERLAP)) return false;
+        return preservesLongTokens(normalizedLive, normalizedCandidate);
+    }
+    private static String compact(String value) { return value == null ? "" : value.replaceAll("\\s+", ""); }
+    private static int longestCommonSubsequence(String left, String right) {
+        int[] previous = new int[right.length() + 1];
+        for (int i = 1; i <= left.length(); i++) {
+            int diagonal = 0;
+            for (int j = 1; j <= right.length(); j++) {
+                int saved = previous[j];
+                previous[j] = left.charAt(i - 1) == right.charAt(j - 1)
+                        ? diagonal + 1 : Math.max(previous[j], previous[j - 1]);
+                diagonal = saved;
+            }
+        }
+        return previous[right.length()];
+    }
+    private static boolean preservesLongTokens(String live, String candidate) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}").matcher(live);
+        while (matcher.find() && !candidate.contains(matcher.group())) return false;
+        return true;
+    }
+    private static String appendQualityNotes(String qualityNotes, String safety) {
+        if (safety == null || safety.isBlank()) return value(qualityNotes);
+        return qualityNotes == null || qualityNotes.isBlank() ? safety : qualityNotes + " " + safety;
+    }
     private static String value(String value) { return value == null ? "" : value; }
     private static String value(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 
     private record Parsed(Map<String, String> finalById, List<SessionReport.Revision> revisions,
-                          List<SessionReport.GlossaryHit> glossaryHits, String summary, String qualityNotes) {}
+                          List<SessionReport.GlossaryHit> glossaryHits, String summary, String qualityNotes,
+                          int rejectedForCompleteness) {}
 
     public record CorrectionResult(String status, String model, Map<String, String> finalById,
                                    List<SessionReport.Revision> revisions, List<SessionReport.GlossaryHit> glossaryHits,
