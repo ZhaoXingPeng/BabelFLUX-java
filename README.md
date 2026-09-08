@@ -228,7 +228,7 @@ POST /api/models/tts/speech
 ## 测试与验证
 
 ```bash
-cd backend && mvn -B test              # Java 后端单元/契约测试（67 passed，2 Docker IT skipped）
+cd backend && mvn -B test              # Java 后端单元/契约测试（73 passed，2 Docker IT skipped）
 cd frontend && npx vue-tsc --noEmit    # 前端类型检查
 cd desktop && npx vue-tsc --noEmit     # 桌面类型检查
 cd desktop && npm run client:build     # 桌面 release exe，验证 deep link 实际运行包
