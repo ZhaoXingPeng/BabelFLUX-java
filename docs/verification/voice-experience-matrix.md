@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.12（2026-09-09）
+版本：v1.13（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -27,7 +27,7 @@
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
 | U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
-| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PARTIAL：真实 `ModelNotFound` 已从误导性 502 修正为 HTTP 422 + 稳定 code/message；其余故障矩阵未跑完 |
+| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PASS（当前边界）：非法 PCM 在 provider 前返回 HTTP 400；真实 `ModelNotFound` 为 HTTP 422 + 稳定 code/message；未知 TTS 模型仍可能等待 provider 超时，已保留为外部模型边界 |
 | U-13 | PCM 队列溢出反馈 | 真实后端 WS 快速注入 200 个 40 ms/1280 bytes PCM 帧 | 页面收到 lagging 状态且显示实际缓冲时长，随后可结束并拿到报告 | PASS：2026-09-09 后端 8005 + 百炼实时链路收到 172 次 `lagging`，`lagMs` 均为 1000（修复前同场景为 0），1.03 s 收到 `session_report` |
 | U-14 | 重复结束会话 | 两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告，用户不感知重复纠偏或重复事件 | PASS：修复后 8006 两端均返回同一 `reportId`；MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-15 | 重复启动主连接 | 两个 WS 客户端复用同一 session token 并发发送 `start_session` | 只有一个实时 runner；第二连接得到可理解错误，主连接字幕/报告不重复 | PASS：修复后 8008 仅一个连接收到 2 组字幕和 1 份报告，另一连接收到“会话已在其他连接中运行” |
@@ -63,6 +63,7 @@
 | I-19 | 最新快照原子最终化 | runner 等待纠偏任务后将内存 `Session` 交给带行锁的 `finish(Session)`，报告与最终快照一次保存；瞬时写入失败最多重试一次 | PASS：H2 JDBC 故障注入首次最终写入失败后重试成功，报告仍含 2 段；真实 MySQL 最终行与报告均为 2 段，生命周期事件各 1 条 |
 | I-20 | 音频时长与处理耗时隔离 | `SessionReportService` 有字幕时使用 segment endMs 时间轴；空会话才使用 wall-clock fallback | PASS：受控 60 s wall-clock/3004 ms segment 测试返回 3004 ms；真实百炼 5/5 返回 3004 ms，MySQL 与 REST 一致 |
 | I-21 | 会后纠偏完整性保护 | `FinalCorrectionService` 对长译文执行长度比例、最长公共子序列重叠和长数字/英文 token 保留校验；拒绝项不进入 `finalById` 或 revision | PASS：`FinalCorrectionServiceTest` 4/4；基线真实报告出现“第一轮检查完成”等删减候选，修复后候选被保留/拒绝策略不会覆盖实时译文，报告质量说明记录保护结果 |
+| I-22 | ASR 音频输入契约 | `DashScopeSpeechClient.transcribe` 在建立 WebSocket 前校验 PCM 偶数字节和 8–48 kHz 采样率；非 PCM 不应用字节对齐规则 | PASS：`DashScopeSpeechClientTest` 6/6；README 伪造 PCM 真实请求由 HTTP 200 空结果修复为 HTTP 400；真实 TTS PCM 仍返回可读 final 文本 |
 
 ## 固定测量记录
 
@@ -388,6 +389,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 测试：`mvn -B '-Dtest=FinalCorrectionServiceTest' test` 4/4；后端全量 101 通过、0 失败、4 个外部集成测试按默认配置跳过；前端 55/55、生产构建通过
 失败与边界：首次真实探针因百炼 TTS 单次读取超时（30 s）未进入会话，重试成功；语义重叠规则偏保守，极短译文不拦截，长时稳定性和多语种数字等价表达仍需扩展语料
 结论：U-21/I-21 已由真实失败样例驱动完成保护，报告优先保证实时译文完整性，再接受会后模型修订；本轮不宣称语义评测或长时质量达标
+```
+
+### 2026-09-09 非法 PCM 输入真实回归（Issue #72）
+
+```text
+提交：fix/voice-pcm-input-contract（提交前工作区）
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+修复前复现：将项目 README.md 作为 `audio/pcm` 上传到 `/api/models/asr/transcriptions?model=fun-asr-realtime&sampleRate=16000`，百炼实际返回 HTTP 200、空 text、0 segments；用户无法区分非法音频与静音
+修复：`DashScopeSpeechClient` 在打开 provider WebSocket 前拒绝 PCM 奇数字节和 8–48 kHz 外采样率；空文件继续返回 400；WAV 等非 PCM 不套用偶数字节规则
+修复后真实结果：同一 README 请求返回 HTTP 400，`{"detail":"PCM audio byte length must be even"}`；真实百炼 TTS PCM（96,136 bytes）请求仍 HTTP 200，返回 `The BabelFlux voice finalization regression test.` final，6 个结果事件，无回归
+用户可见结果：非法上传立即得到可理解的格式错误，不再显示“识别完成但没有文字”；合法语音仍可识别
+底层证据：校验发生在 `ensureConfigured`/WebSocket 连接前，非法输入不会消耗 provider 请求；错误由 `ApiExceptionHandler` 稳定映射为 HTTP 400
+测试：`mvn -B '-Dtest=DashScopeSpeechClientTest' test` 6/6；后端全量 104 通过、0 失败、4 个外部集成测试按默认配置跳过；真实 8013/8014 健康检查 HTTP 200
+失败与边界：未知 TTS 模型的真实请求仍可能等待 30 s 后返回 504，属于 provider 未及时发出模型错误事件，后续需模型白名单或上游超时分类；本 PR 不改非 PCM 解码器
+结论：U-12/I-22 的非法 PCM 误报已由真实请求驱动修复；错误在本地边界被快速拒绝，合法百炼链路保持可用
 ```
 
 ## 当前结论
