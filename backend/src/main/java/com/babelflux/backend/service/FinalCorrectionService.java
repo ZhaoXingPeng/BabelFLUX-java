@@ -12,6 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -97,10 +99,13 @@ public class FinalCorrectionService {
     private CorrectionResult correctBatched(Session session, List<Session.Segment> segments, String model) {
         long started = System.nanoTime();
         List<List<Session.Segment>> batches = partition(segments, properties.getFinalCorrectionBatchSize());
-        List<Future<DashScopeClient.LlmGenerateResponse>> tasks = new ArrayList<>(batches.size());
-        for (List<Session.Segment> batch : batches) {
-            tasks.add(executor.submit(() -> client.generate(model, "text", messages(session, batch), Map.of(
-                    "result_format", "message", "temperature", 0.2))));
+        CompletionService<BatchResponse> completion = new ExecutorCompletionService<>(executor);
+        List<Future<BatchResponse>> tasks = new ArrayList<>(batches.size());
+        for (int index = 0; index < batches.size(); index++) {
+            final int batchIndex = index;
+            tasks.add(completion.submit(() -> new BatchResponse(batchIndex, client.generate(
+                    model, "text", messages(session, batches.get(batchIndex)), Map.of(
+                            "result_format", "message", "temperature", 0.2)))));
         }
 
         Map<String, String> finalById = new LinkedHashMap<>();
@@ -112,32 +117,44 @@ public class FinalCorrectionService {
         int failed = 0;
         int timedOut = 0;
         long deadline = started + timeout().toNanos();
+        int completed = 0;
         try {
-            for (int index = 0; index < tasks.size(); index++) {
+            // Consume whichever batch finishes first; a slow provider must not hide completed windows.
+            while (completed < tasks.size()) {
                 long remaining = deadline - System.nanoTime();
                 if (remaining <= 0) {
-                    timedOut += tasks.size() - index;
+                    timedOut += tasks.size() - completed;
                     break;
                 }
-                DashScopeClient.LlmGenerateResponse response;
+                Future<BatchResponse> completedTask;
                 try {
-                    response = tasks.get(index).get(remaining, TimeUnit.NANOSECONDS);
-                } catch (TimeoutException error) {
-                    timedOut++;
-                    break;
+                    completedTask = completion.poll(remaining, TimeUnit.NANOSECONDS);
                 } catch (InterruptedException error) {
                     Thread.currentThread().interrupt();
-                    timedOut += tasks.size() - index;
+                    timedOut += tasks.size() - completed;
                     break;
+                }
+                if (completedTask == null) {
+                    timedOut += tasks.size() - completed;
+                    break;
+                }
+                completed++;
+                BatchResponse batchResponse;
+                try {
+                    batchResponse = completedTask.get();
                 } catch (ExecutionException | java.util.concurrent.CancellationException error) {
                     failed++;
                     continue;
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    timedOut += tasks.size() - completed;
+                    break;
                 }
-                if (response == null) {
+                if (batchResponse == null || batchResponse.response() == null) {
                     failed++;
                     continue;
                 }
-                Parsed parsed = parse(response.content(), batches.get(index));
+                Parsed parsed = parse(batchResponse.response().content(), batches.get(batchResponse.index()));
                 if (parsed == null) {
                     failed++;
                     continue;
@@ -382,6 +399,8 @@ public class FinalCorrectionService {
     private record Parsed(Map<String, String> finalById, List<SessionReport.Revision> revisions,
                           List<SessionReport.GlossaryHit> glossaryHits, String summary, String qualityNotes,
                           int rejectedForCompleteness) {}
+
+    private record BatchResponse(int index, DashScopeClient.LlmGenerateResponse response) {}
 
     public record CorrectionResult(String status, String model, Map<String, String> finalById,
                                    List<SessionReport.Revision> revisions, List<SessionReport.GlossaryHit> glossaryHits,
