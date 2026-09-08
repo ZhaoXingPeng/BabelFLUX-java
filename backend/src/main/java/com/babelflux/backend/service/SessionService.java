@@ -83,7 +83,7 @@ public class SessionService {
         try {
             // Re-read after winning the slot: another path may have persisted the report
             // between the initial lookup and putIfAbsent.
-            session = get(id);
+            session = getForUpdate(id);
             if (session.getReport() != null) {
                 created.complete(session.getReport());
                 return session.getReport();
@@ -123,6 +123,9 @@ public class SessionService {
     }
 
     public Session get(String id) { return repository.findById(id).orElseThrow(() -> new SessionNotFoundException(id)); }
+    private Session getForUpdate(String id) {
+        return repository.findByIdForUpdate(id).orElseThrow(() -> new SessionNotFoundException(id));
+    }
     @Transactional
     public Session saveProgress(Session session) { return repository.save(session); }
     public List<Session> list() { return repository.findAll().stream().sorted(Comparator.comparing(Session::getCreatedAt).reversed()).toList(); }
