@@ -102,24 +102,36 @@ public class DashScopeSpeechClient {
                                 String audioFormat, int sampleRate, String mode) {
         if (text == null || text.isBlank()) throw new DashScopeClient.InvalidRequestException("text is required");
         ensureConfigured();
+        String normalizedModel = model == null || model.isBlank() ? "qwen3-tts-flash-realtime" : model;
+        validateTtsModel(normalizedModel);
         List<String> events = new ArrayList<>();
         java.io.ByteArrayOutputStream audio = new java.io.ByteArrayOutputStream();
         String sessionId = null;
-        try (WebSocketConnection ws = connector.connect(ttsUrl(model), headers())) {
+        try (WebSocketConnection ws = connector.connect(ttsUrl(normalizedModel), headers())) {
             ws.sendText(json(Map.of("type", "session.update", "session", Map.of("mode", mode,
                     "voice", voice, "language_type", languageType, "response_format", audioFormat,
                     "sample_rate", sampleRate))));
             // DashScope may acknowledge session.update with session.created only.
             // Treat either lifecycle acknowledgement as a completed handshake;
             // waiting specifically for session.updated turns a healthy socket into a timeout.
-            while (true) {
-                JsonNode node = receiveJson(ws);
-                String event = text(node, "type");
-                events.add(event);
-                if ("session.created".equals(event) || "session.updated".equals(event)) {
-                    sessionId = sessionId == null ? text(node.path("session"), "id") : sessionId;
-                    break;
-                } else if ("error".equals(event)) throw realtimeError(node, "DashScope TTS session failed");
+            try {
+                long handshakeDeadline = System.nanoTime() + speechHandshakeTimeout().toNanos();
+                while (true) {
+                    long remainingNanos = handshakeDeadline - System.nanoTime();
+                    if (remainingNanos <= 0) {
+                        throw new DashScopeClient.TimeoutException("TTS handshake deadline exceeded", null);
+                    }
+                    JsonNode node = receiveJson(ws, Duration.ofNanos(remainingNanos));
+                    String event = text(node, "type");
+                    events.add(event);
+                    if ("session.created".equals(event) || "session.updated".equals(event)) {
+                        sessionId = sessionId == null ? text(node.path("session"), "id") : sessionId;
+                        break;
+                    } else if ("error".equals(event)) throw realtimeError(node, "DashScope TTS session failed");
+                }
+            } catch (DashScopeClient.TimeoutException timeout) {
+                throw new DashScopeClient.TimeoutException(
+                        "DashScope TTS handshake timed out; verify model and provider availability", timeout);
             }
             ws.sendText(json(Map.of("type", "input_text_buffer.append", "text", text)));
             if ("commit".equals(mode)) ws.sendText(json(Map.of("type", "input_text_buffer.commit")));
@@ -149,7 +161,7 @@ public class DashScopeSpeechClient {
             throw new DashScopeClient.UpstreamException("DashScope TTS connection failed", 502, null,
                     null, error);
         }
-        return new TtsResult(model, voice, audio.toByteArray(), audioFormat, sampleRate, List.copyOf(events), sessionId);
+        return new TtsResult(normalizedModel, voice, audio.toByteArray(), audioFormat, sampleRate, List.copyOf(events), sessionId);
     }
 
     private Message waitForHeaderEvent(WebSocketConnection ws, String expected, List<String> events) throws Exception {
@@ -163,7 +175,11 @@ public class DashScopeSpeechClient {
     }
 
     private JsonNode receiveJson(WebSocketConnection ws) throws Exception {
-        String raw = ws.receive(properties.getRequestTimeout());
+        return receiveJson(ws, properties.getRequestTimeout());
+    }
+
+    private JsonNode receiveJson(WebSocketConnection ws, Duration timeout) throws Exception {
+        String raw = ws.receive(timeout);
         try {
             return mapper.readTree(raw);
         } catch (JsonProcessingException error) {
@@ -179,6 +195,18 @@ public class DashScopeSpeechClient {
             throw new DashScopeClient.ConfigurationException("DASHSCOPE_HTTP_BASE_URL is required for speech calls");
     }
 
+    private void validateTtsModel(String model) {
+        if (properties.getAllowedTtsModels() == null || properties.getAllowedTtsModels().isEmpty()) return;
+        boolean allowed = properties.getAllowedTtsModels().stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .anyMatch(model::equals);
+        if (!allowed) {
+            throw new DashScopeClient.InvalidRequestException("unsupported TTS model: " + model
+                    + "; configure DASHSCOPE_ALLOWED_TTS_MODELS to allow it");
+        }
+    }
+
     private static void validateAudioInput(byte[] audio, String audioFormat, int sampleRate) {
         if (sampleRate < 8_000 || sampleRate > 48_000) {
             throw new DashScopeClient.InvalidRequestException("sampleRate must be between 8000 and 48000 Hz");
@@ -186,6 +214,14 @@ public class DashScopeSpeechClient {
         if ("pcm".equalsIgnoreCase(audioFormat) && audio.length % 2 != 0) {
             throw new DashScopeClient.InvalidRequestException("PCM audio byte length must be even");
         }
+    }
+
+    private Duration speechHandshakeTimeout() {
+        Duration configured = properties.getSpeechHandshakeTimeout();
+        Duration general = properties.getRequestTimeout();
+        if (configured == null || configured.isNegative() || configured.isZero()) configured = Duration.ofSeconds(5);
+        if (general == null || general.isNegative() || general.isZero()) return configured;
+        return configured.compareTo(general) > 0 ? general : configured;
     }
 
     private String asrUrl() { return websocketBaseUrl() + "/inference"; }
