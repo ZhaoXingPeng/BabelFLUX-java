@@ -37,7 +37,22 @@ class SessionEventRelayTest {
 
         new SessionEventRelay(outbox, publisher).relay();
 
-        verify(outbox).markFailed(any(String.class), any(String.class), any(java.time.Instant.class));
+        verify(outbox).markFailed(eq("e-2"), any(String.class), any(java.time.Instant.class), eq("broker unavailable"));
+    }
+
+    @Test
+    void schedulesRetryForUnexpectedRuntimeFailure() {
+        JdbcSessionEventOutbox outbox = mock(JdbcSessionEventOutbox.class);
+        EventPublisher publisher = mock(EventPublisher.class);
+        var event = new JdbcSessionEventOutbox.PendingEvent("e-4", "session.created", "s-1", "{}", 0);
+        when(outbox.pending(100)).thenReturn(List.of(event));
+        when(outbox.tryClaim(any(String.class), any(String.class), any(java.time.Instant.class))).thenReturn(true);
+        org.mockito.Mockito.doThrow(new IllegalArgumentException()).when(publisher).publish("session.created", "{}");
+
+        new SessionEventRelay(outbox, publisher).relay();
+
+        verify(outbox).markFailed(eq("e-4"), any(String.class), any(java.time.Instant.class),
+                eq("IllegalArgumentException"));
     }
 
     @Test

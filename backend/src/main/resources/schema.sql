@@ -37,6 +37,7 @@ create table if not exists babelflux_session_event_outbox (
     next_attempt_at timestamp not null,
     created_at timestamp not null default current_timestamp,
     published_at timestamp null,
+    last_error varchar(1000),
     lease_owner varchar(128),
     lease_until timestamp null
 );

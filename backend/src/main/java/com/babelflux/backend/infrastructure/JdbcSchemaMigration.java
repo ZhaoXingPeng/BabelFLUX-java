@@ -28,6 +28,7 @@ public class JdbcSchemaMigration {
     void migrate() {
         ensureColumn("babelflux_session_event_outbox", "lease_owner", "varchar(128)");
         ensureColumn("babelflux_session_event_outbox", "lease_until", "timestamp null");
+        ensureColumn("babelflux_session_event_outbox", "last_error", "varchar(1000)");
         ensureColumn("babelflux_report_index_jobs", "lease_owner", "varchar(128)");
         ensureColumn("babelflux_report_index_jobs", "lease_until", "timestamp null");
     }
