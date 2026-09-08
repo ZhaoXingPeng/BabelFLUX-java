@@ -43,6 +43,8 @@ babelflux:
     workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
     base-url: ${DASHSCOPE_HTTP_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
     request-timeout: ${DASHSCOPE_REQUEST_TIMEOUT_SECONDS:30s}
+    speech-handshake-timeout: ${DASHSCOPE_SPEECH_HANDSHAKE_TIMEOUT_SECONDS:5s}
+    allowed-tts-models: ${DASHSCOPE_ALLOWED_TTS_MODELS:qwen3-tts-flash-realtime}
     live-translate-model: ${LIVE_TRANSLATE_MODEL:qwen3.5-livetranslate-flash-realtime}
     live-translate-asr-model: ${LIVE_TRANSLATE_ASR_MODEL:qwen3-asr-flash-realtime}
     realtime-revision-model: ${REALTIME_REVISION_MODEL:qwen-flash}

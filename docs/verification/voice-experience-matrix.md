@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.13（2026-09-09）
+版本：v1.14（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -27,7 +27,7 @@
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
 | U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
-| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PASS（当前边界）：非法 PCM 在 provider 前返回 HTTP 400；真实 `ModelNotFound` 为 HTTP 422 + 稳定 code/message；未知 TTS 模型仍可能等待 provider 超时，已保留为外部模型边界 |
+| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PASS（已覆盖输入/模型选择边界）：非法 PCM 和未允许 TTS 模型均在本地返回 HTTP 400；真实 `ModelNotFound` 为 HTTP 422 + 稳定 code/message；已允许但 provider 不响应的模型仍按握手超时返回 504 |
 | U-13 | PCM 队列溢出反馈 | 真实后端 WS 快速注入 200 个 40 ms/1280 bytes PCM 帧 | 页面收到 lagging 状态且显示实际缓冲时长，随后可结束并拿到报告 | PASS：2026-09-09 后端 8005 + 百炼实时链路收到 172 次 `lagging`，`lagMs` 均为 1000（修复前同场景为 0），1.03 s 收到 `session_report` |
 | U-14 | 重复结束会话 | 两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告，用户不感知重复纠偏或重复事件 | PASS：修复后 8006 两端均返回同一 `reportId`；MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-15 | 重复启动主连接 | 两个 WS 客户端复用同一 session token 并发发送 `start_session` | 只有一个实时 runner；第二连接得到可理解错误，主连接字幕/报告不重复 | PASS：修复后 8008 仅一个连接收到 2 组字幕和 1 份报告，另一连接收到“会话已在其他连接中运行” |
@@ -64,6 +64,7 @@
 | I-20 | 音频时长与处理耗时隔离 | `SessionReportService` 有字幕时使用 segment endMs 时间轴；空会话才使用 wall-clock fallback | PASS：受控 60 s wall-clock/3004 ms segment 测试返回 3004 ms；真实百炼 5/5 返回 3004 ms，MySQL 与 REST 一致 |
 | I-21 | 会后纠偏完整性保护 | `FinalCorrectionService` 对长译文执行长度比例、最长公共子序列重叠和长数字/英文 token 保留校验；拒绝项不进入 `finalById` 或 revision | PASS：`FinalCorrectionServiceTest` 4/4；基线真实报告出现“第一轮检查完成”等删减候选，修复后候选被保留/拒绝策略不会覆盖实时译文，报告质量说明记录保护结果 |
 | I-22 | ASR 音频输入契约 | `DashScopeSpeechClient.transcribe` 在建立 WebSocket 前校验 PCM 偶数字节和 8–48 kHz 采样率；非 PCM 不应用字节对齐规则 | PASS：`DashScopeSpeechClientTest` 6/6；README 伪造 PCM 真实请求由 HTTP 200 空结果修复为 HTTP 400；真实 TTS PCM 仍返回可读 final 文本 |
+| I-23 | TTS 模型选择与握手预算 | `DashScopeSpeechClient` 使用可配置 `allowedTtsModels` 白名单；允许模型握手使用独立 deadline，音频/结束阶段保留通用读取超时 | PASS：单测 9/9；未知模型真实延迟由 30,453 ms 降为 135 ms/HTTP 400，合法模型 1,486 ms/HTTP 200；配置 `DASHSCOPE_ALLOWED_TTS_MODELS` 可扩展白名单 |
 
 ## 固定测量记录
 
@@ -406,6 +407,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 测试：`mvn -B '-Dtest=DashScopeSpeechClientTest' test` 6/6；后端全量 104 通过、0 失败、4 个外部集成测试按默认配置跳过；真实 8013/8014 健康检查 HTTP 200
 失败与边界：未知 TTS 模型的真实请求仍可能等待 30 s 后返回 504，属于 provider 未及时发出模型错误事件，后续需模型白名单或上游超时分类；本 PR 不改非 PCM 解码器
 结论：U-12/I-22 的非法 PCM 误报已由真实请求驱动修复；错误在本地边界被快速拒绝，合法百炼链路保持可用
+```
+
+### 2026-09-09 TTS 未知模型等待真实回归（Issue #74）
+
+```text
+提交：fix/voice-tts-handshake-timeout（提交前工作区）
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+修复前复现：TTS 模型 `not-a-real-model` 请求在通用 30 s 读取窗口内无错误事件，真实测得 30,453 ms 后 HTTP 504；加入“每次读取 5 s”后仍因 provider 杂讯重置预算，15 s 客户端请求无响应
+修复：新增默认 5 s 的 `speechHandshakeTimeout` 和整体 deadline；同时增加可配置 `allowedTtsModels`（默认仅已验证 `qwen3-tts-flash-realtime`），未知模型在打开 WebSocket 前本地拒绝
+修复后真实结果：同一未知模型请求 135 ms 返回 HTTP 400；合法 `qwen3-tts-flash-realtime` 请求 1,486 ms 返回 HTTP 200，音频非空；音频响应阶段仍使用 30 s 通用读取窗口
+用户可见结果：模型名写错时从等待半分钟变为即时可理解错误；合法 TTS 首包与音频输出不受影响
+底层证据：`DashScopeSpeechClientTest` 覆盖白名单拒绝、握手/通用读取窗口分离和 deadline 超时；白名单为空可显式允许自定义 provider 模型
+测试：`mvn -B '-Dtest=DashScopeSpeechClientTest' test` 9/9；后端全量 107 通过、0 失败、4 个外部集成测试按默认配置跳过；8013/8014 健康检查 HTTP 200
+失败与边界：已加入白名单但 provider 不发送 lifecycle/音频事件仍可能在 5 s/30 s 窗口后返回 504；不把本地白名单当作 provider 模型可用性证明
+结论：U-12/I-23 的模型选择等待已从 30 s 级别降为 135 ms 本地反馈；握手预算与音频读取预算分离，后续仍需补 provider 错误事件分类
 ```
 
 ## 当前结论

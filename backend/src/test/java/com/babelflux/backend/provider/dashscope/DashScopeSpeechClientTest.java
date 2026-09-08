@@ -109,6 +109,50 @@ class DashScopeSpeechClientTest {
                 result.events());
     }
 
+    @Test
+    void usesShortHandshakeWindowButKeepsGeneralReadTimeout() {
+        FakeConnection connection = new FakeConnection(
+                "{\"type\":\"session.created\",\"session\":{\"id\":\"window-test\"}}",
+                "{\"type\":\"response.done\"}",
+                "{\"type\":\"session.finished\"}");
+        DashScopeProperties properties = properties();
+        properties.setRequestTimeout(Duration.ofSeconds(30));
+        properties.setSpeechHandshakeTimeout(Duration.ofSeconds(5));
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties, new ObjectMapper(),
+                (url, headers) -> connection);
+
+        client.synthesize("hello", "qwen3-tts-flash-realtime", "Cherry", "Auto", "pcm", 24_000, "commit");
+
+        assertTrue(connection.receivedTimeouts.getFirst().toMillis() <= 5_000);
+        assertTrue(connection.receivedTimeouts.getFirst().toMillis() >= 4_900);
+        assertEquals(Duration.ofSeconds(30), connection.receivedTimeouts.get(1));
+    }
+
+    @Test
+    void convertsHandshakeTimeoutToActionableTtsError() {
+        DashScopeProperties properties = properties();
+        properties.setRequestTimeout(Duration.ofSeconds(30));
+        properties.setSpeechHandshakeTimeout(Duration.ofSeconds(5));
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties, new ObjectMapper(),
+                (url, headers) -> new TimeoutConnection());
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(DashScopeClient.TimeoutException.class,
+                () -> client.synthesize("hello", "qwen3-tts-flash-realtime", "Cherry", "Auto", "pcm", 24_000, "commit"));
+
+        assertEquals("DashScope TTS handshake timed out; verify model and provider availability", error.getMessage());
+    }
+
+    @Test
+    void rejectsUnknownTtsModelBeforeOpeningProviderConnection() {
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties(), new ObjectMapper(),
+                (url, headers) -> { throw new AssertionError("provider must not be contacted"); });
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(DashScopeClient.InvalidRequestException.class,
+                () -> client.synthesize("hello", "not-a-real-model", "Cherry", "Auto", "pcm", 24_000, "commit"));
+
+        assertTrue(error.getMessage().contains("unsupported TTS model"));
+    }
+
     private static DashScopeProperties properties() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");
@@ -120,12 +164,22 @@ class DashScopeSpeechClientTest {
     private static final class FakeConnection implements DashScopeSpeechClient.WebSocketConnection {
         private final ArrayDeque<String> inbound = new ArrayDeque<>();
         private final ArrayList<String> sentText = new ArrayList<>();
+        private final ArrayList<Duration> receivedTimeouts = new ArrayList<>();
         private int binaryBytes;
 
         private FakeConnection(String... messages) { java.util.Collections.addAll(inbound, messages); }
         @Override public void sendText(String text) { sentText.add(text); }
         @Override public void sendBinary(ByteBuffer data) { binaryBytes += data.remaining(); }
-        @Override public String receive(Duration timeout) { return inbound.removeFirst(); }
+        @Override public String receive(Duration timeout) { receivedTimeouts.add(timeout); return inbound.removeFirst(); }
+        @Override public void close() {}
+    }
+
+    private static final class TimeoutConnection implements DashScopeSpeechClient.WebSocketConnection {
+        @Override public void sendText(String text) {}
+        @Override public void sendBinary(ByteBuffer data) {}
+        @Override public String receive(Duration timeout) {
+            throw new DashScopeClient.TimeoutException("provider read timed out", null);
+        }
         @Override public void close() {}
     }
 }

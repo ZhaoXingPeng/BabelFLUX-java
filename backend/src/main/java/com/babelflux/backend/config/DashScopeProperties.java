@@ -1,6 +1,7 @@
 package com.babelflux.backend.config;
 
 import java.time.Duration;
+import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "babelflux.dashscope")
@@ -9,6 +10,8 @@ public class DashScopeProperties {
     private String workspaceId;
     private String baseUrl;
     private Duration requestTimeout = Duration.ofSeconds(30);
+    private Duration speechHandshakeTimeout = Duration.ofSeconds(5);
+    private List<String> allowedTtsModels = List.of("qwen3-tts-flash-realtime");
     private String liveTranslateModel = "qwen3.5-livetranslate-flash-realtime";
     private String liveTranslateAsrModel = "qwen3-asr-flash-realtime";
     private String realtimeRevisionModel = "qwen-flash";
@@ -31,6 +34,12 @@ public class DashScopeProperties {
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
     public Duration getRequestTimeout() { return requestTimeout; }
     public void setRequestTimeout(Duration requestTimeout) { this.requestTimeout = requestTimeout; }
+    public Duration getSpeechHandshakeTimeout() { return speechHandshakeTimeout; }
+    public void setSpeechHandshakeTimeout(Duration speechHandshakeTimeout) { this.speechHandshakeTimeout = speechHandshakeTimeout; }
+    public List<String> getAllowedTtsModels() { return allowedTtsModels; }
+    public void setAllowedTtsModels(List<String> allowedTtsModels) {
+        this.allowedTtsModels = allowedTtsModels == null ? List.of() : List.copyOf(allowedTtsModels);
+    }
     public String getLiveTranslateModel() { return liveTranslateModel; }
     public void setLiveTranslateModel(String liveTranslateModel) { this.liveTranslateModel = liveTranslateModel; }
     public String getLiveTranslateAsrModel() { return liveTranslateAsrModel; }
