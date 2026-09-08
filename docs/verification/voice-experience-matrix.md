@@ -34,7 +34,7 @@
 | U-16 | 跨实例重复启动主连接 | 两个后端实例共享 Redis，两个 WS 客户端复用同一 session token 并发发送 `start_session` | 全局只有一个实时 runner；非 owner 实例得到可理解错误，owner 正常输出字幕和报告 | PASS：8013/8014 实测仅 8013 获得 lease 并输出 2 组字幕；8014 返回“会话已在其他实例中运行” |
 | U-17 | 跨实例重复结束会话 | 两个后端实例共享 MySQL，两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告；报告生成、纠偏调用和生命周期事件均不重复 | PASS：修复后 8013/8014 均返回同一 reportId，MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-18 | 跨实例 handoff 字幕投送 | 主 WS 与 handoff WS 连接不同后端实例，主端启动真实会话 | handoff 端收到与主端相同的字幕、状态和 session_report，不出现“已连接但无字幕” | PASS：8013 主端与 8014 handoff 各收到 6 个启动/字幕事件及同一 `session_report` |
-| U-19 | 跨实例启动状态即时可见 | 8013 创建会话并发送带语言/领域覆盖的 `start_session`，立即从 8014 查询历史 | 查询立即显示 `running` 及本次覆盖参数，不需等会话结束 | NOT RUN：等待修复分支部署后的真实双实例回归 |
+| U-19 | 跨实例启动状态即时可见 | 8013 创建会话并发送带语言/领域覆盖的 `start_session`，立即从 8014 查询历史 | 查询立即显示 `running` 及本次覆盖参数，不需等会话结束 | PASS：当前提交 `dc29ad9` 实测 250 ms 内读到 `running/ja/en/running-state-real/balanced`；结束后两实例历史一致 |
 
 ## 用户不可见的底层矩阵
 
@@ -57,7 +57,7 @@
 | I-15 | 跨 JVM 报告最终化幂等 | `JdbcSessionRepository.findByIdForUpdate` 在同一事务内锁定 session 行；第二事务读取已持久化 `report_json` 后直接复用 | PASS：H2 两事务并发测试和真实 MySQL 双实例回归均只调用一次生成器、只追加一组生命周期事件 |
 | I-16 | Redis 实时事件 fan-out | `RedisMessageListenerContainer` 订阅 `babelflux:events:session:*`；消息 envelope 携带 publisher，远端只写入本地 bounded history/queue，忽略自身回环 | PASS：真实 8013->Redis 6380->8014 handoff 收到字幕和终态；Pub/Sub 无持久重放、Redis 故障边界已记录 |
 | I-17 | 控制状态 fan-out | `pause_session` / `resume_session` 构造 `source_sync_state`，统一经 `SessionEventHub.publish` 后回发主连接 | PASS：修复前 handoff 只有 ready；修复后真实双实例均收到暂停/恢复状态；handoff 不具备 runner 控制权 |
-| I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | NOT RUN：已补 JDBC 快照测试与 handler 调用/失败回滚测试，等待真实 MySQL 证据 |
+| I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | PASS：H2/JDBC 与 handler 测试 14/14；真实 MySQL 查询启动后即为 running，最终 `segments_json`=2、`report_json` 非空，outbox 生命周期事件各 1 条 |
 
 ## 固定测量记录
 
@@ -319,6 +319,22 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 测试：`mvn -B '-Dtest=SessionWebSocketHandlerTest,SessionEventHubTest' test`，14/14 通过；前端 55/55 与构建门禁已在同一运行环境通过
 失败样例与边界：本次 Node WS 采集窗口未捕获 `session_report`，但数据库已确认报告落库；Redis Pub/Sub 故障窗口仍可能丢实时控制状态，MySQL 是生命周期事实源
 结论：U-08/I-17 跨实例暂停/恢复状态已从“主端可见、handoff 不可见”恢复为两端一致；不把 handoff 的只读订阅误标为控制权限
+```
+
+### 2026-09-09 跨实例会话启动快照真实回归（Issue #64）
+
+```text
+提交：fix/session-start-persistence @ dc29ad9
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+修复前复现：session `660d8565-1413-43a3-89b4-d3696c1860d8` 启动后立即从 8014 查询仍为 `created`、旧语言/领域和 0 个 segment，结束后才更新
+实验：8013 创建 demo session `af384c30-e476-44b5-8d39-32a17cad17dd`，WS 发送 `start_session` 覆盖 `ja -> en`、`running-state-real`、`balanced`；250 ms 后从 8014 查询，再发送 `audio_end`
+用户可见结果：250 ms 内 8014 已返回 `status=running`、`sourceLanguage=ja`、`targetLanguage=en`、`domain=running-state-real`、`modelProfile=balanced`、`segmentCount=0`；结束后两实例均为 `ended`、2 段字幕和同一 reportId=`af384c30-e476-44b5-8d39-32a17cad17dd-report`
+底层证据：MySQL 直接查询最终行 `ended/ja/en/running-state-real/balanced`，`segments_json` 包含 2 段、`report_json` 非空；outbox `session.created=1`、`session.finished=1`、`report.generated=1`
+测试：`mvn -B '-Dtest=JdbcSessionRepositoryTest,SessionWebSocketHandlerTest' test`，14/14 通过；前后端健康检查均 HTTP 200/`{"status":"ok"}`
+失败样例与边界：本次使用 demo provider 验证持久化时序，不宣称百炼实时 ASR 延迟；启动异常回滚由 handler 测试覆盖，数据库故障重试和长时稳定性仍未测
+结论：U-19/I-18 从“结束时才可见”修复为“启动后跨实例立即可见”；启动快照成为 runner 创建前的持久化边界，避免刷新/切实例看到过期状态
 ```
 
 ## 当前结论
