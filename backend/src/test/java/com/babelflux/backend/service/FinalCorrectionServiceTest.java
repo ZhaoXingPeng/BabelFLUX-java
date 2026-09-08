@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.babelflux.backend.config.DashScopeProperties;
@@ -99,6 +101,37 @@ class FinalCorrectionServiceTest {
         assertEquals("partial", result.status());
         assertTrue(result.finalById().isEmpty());
         assertTrue(result.error().contains("完整性保护"));
+        service.shutdown();
+    }
+
+    @Test
+    void batchesLongCorrectionAndMergesEachWindow() {
+        DashScopeClient client = mock(DashScopeClient.class);
+        DashScopeProperties properties = configured();
+        properties.setFinalCorrectionBatchSize(2);
+        when(client.generate(any(), any(), any(), any())).thenReturn(new DashScopeClient.LlmGenerateResponse(
+                "req-batch", "qwen-plus", "{"+
+                        "\"summary\":\"批次完成\",\"segments\":["+
+                        "{\"id\":\"s1\",\"finalTranslation\":\"最终一\"},"+
+                        "{\"id\":\"s2\",\"finalTranslation\":\"最终二\"},"+
+                        "{\"id\":\"s3\",\"finalTranslation\":\"最终三\"},"+
+                        "{\"id\":\"s4\",\"finalTranslation\":\"最终四\"},"+
+                        "{\"id\":\"s5\",\"finalTranslation\":\"最终五\"}]}" ,
+                List.of(), "stop", Map.of()));
+        FinalCorrectionService service = new FinalCorrectionService(client, properties, new ObjectMapper());
+        Session session = Session.create("long-correction", "long", "en", "zh", "技术", "默认",
+                "quick", "demo", "demo", null, "idle", false, List.of());
+        for (int index = 1; index <= 5; index++) {
+            session.addSegment(new Session.Segment("s" + index, "source " + index,
+                    "实时 " + index, index * 1000L, index * 1000L + 500L, "final"));
+        }
+
+        FinalCorrectionService.CorrectionResult result = service.correct(session, session.getSegments());
+
+        assertEquals("completed", result.status());
+        assertEquals(5, result.finalById().size());
+        assertEquals("最终三", result.finalById().get("s3"));
+        verify(client, times(3)).generate(any(), any(), any(), any());
         service.shutdown();
     }
 

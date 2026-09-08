@@ -59,3 +59,4 @@ babelflux:
     realtime-revision-window-segments: ${REALTIME_REVISION_WINDOW_SEGMENTS:4}
     realtime-revision-max-per-minute: ${REALTIME_REVISION_MAX_PER_MINUTE:6}
     realtime-queue-frames: ${REALTIME_QUEUE_FRAMES:250}
+    final-correction-batch-size: ${FINAL_CORRECTION_BATCH_SIZE:8}

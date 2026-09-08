@@ -45,6 +45,13 @@ public class FinalCorrectionService {
             return CorrectionResult.skipped("未配置百炼 API key，报告使用实时译文生成。");
         }
         String model = correctionModel(session.getModelProfile());
+        if (segments.size() > properties.getFinalCorrectionBatchSize()) {
+            return correctBatched(session, segments, model);
+        }
+        return correctSingle(session, segments, model);
+    }
+
+    private CorrectionResult correctSingle(Session session, List<Session.Segment> segments, String model) {
         Future<DashScopeClient.LlmGenerateResponse> task = executor.submit(() -> client.generate(
                 model, "text", messages(session, segments), Map.of(
                         "result_format", "message", "temperature", 0.2)));
@@ -87,6 +94,81 @@ public class FinalCorrectionService {
         }
     }
 
+    private CorrectionResult correctBatched(Session session, List<Session.Segment> segments, String model) {
+        long started = System.nanoTime();
+        List<List<Session.Segment>> batches = partition(segments, properties.getFinalCorrectionBatchSize());
+        List<Future<DashScopeClient.LlmGenerateResponse>> tasks = new ArrayList<>(batches.size());
+        for (List<Session.Segment> batch : batches) {
+            tasks.add(executor.submit(() -> client.generate(model, "text", messages(session, batch), Map.of(
+                    "result_format", "message", "temperature", 0.2))));
+        }
+
+        Map<String, String> finalById = new LinkedHashMap<>();
+        List<SessionReport.Revision> revisions = new ArrayList<>();
+        List<SessionReport.GlossaryHit> glossaryHits = new ArrayList<>();
+        List<String> summaries = new ArrayList<>();
+        List<String> qualityNotes = new ArrayList<>();
+        int rejected = 0;
+        int failed = 0;
+        int timedOut = 0;
+        long deadline = started + timeout().toNanos();
+        try {
+            for (int index = 0; index < tasks.size(); index++) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    timedOut += tasks.size() - index;
+                    break;
+                }
+                DashScopeClient.LlmGenerateResponse response;
+                try {
+                    response = tasks.get(index).get(remaining, TimeUnit.NANOSECONDS);
+                } catch (TimeoutException error) {
+                    timedOut++;
+                    break;
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    timedOut += tasks.size() - index;
+                    break;
+                } catch (ExecutionException | java.util.concurrent.CancellationException error) {
+                    failed++;
+                    continue;
+                }
+                if (response == null) {
+                    failed++;
+                    continue;
+                }
+                Parsed parsed = parse(response.content(), batches.get(index));
+                if (parsed == null) {
+                    failed++;
+                    continue;
+                }
+                finalById.putAll(parsed.finalById());
+                revisions.addAll(parsed.revisions());
+                glossaryHits.addAll(parsed.glossaryHits());
+                if (!value(parsed.summary()).isBlank()) summaries.add(parsed.summary());
+                if (!value(parsed.qualityNotes()).isBlank()) qualityNotes.add(parsed.qualityNotes());
+                rejected += parsed.rejectedForCompleteness();
+            }
+        } finally {
+            tasks.stream().filter(task -> !task.isDone()).forEach(task -> task.cancel(true));
+        }
+
+        int missing = segments.size() - finalById.size();
+        String status = missing == 0 ? "completed"
+                : rejected > 0 || !finalById.isEmpty() ? "partial"
+                : timedOut > 0 ? "timeout" : "fallback";
+        List<String> errors = new ArrayList<>();
+        if (missing > 0) errors.add("会后完整纠偏返回缺少 " + missing + " 句，缺失句已使用实时译文。");
+        if (rejected > 0) errors.add("完整性保护拒绝 " + rejected + " 句显著缩短的会后译文，保留实时译文。");
+        if (timedOut > 0) errors.add("会后完整纠偏有 " + timedOut + " 个批次超时，报告使用实时译文兜底。");
+        if (failed > 0) errors.add("会后完整纠偏有 " + failed + " 个批次调用失败，报告使用实时译文兜底。");
+        String error = String.join(" ", errors);
+        String summary = String.join(" ", summaries);
+        String quality = String.join(" ", qualityNotes);
+        return new CorrectionResult(status, model, finalById, List.copyOf(revisions),
+                List.copyOf(glossaryHits), summary, appendQualityNotes(quality, error), error, elapsed(started));
+    }
+
     public String correctionModel(String profile) {
         return switch (profile == null ? "" : profile) {
             case "快速低延迟" -> value(properties.getFastFinalCorrectionModel(), properties.getFinalCorrectionModel());
@@ -106,7 +188,7 @@ public class FinalCorrectionService {
     }
 
     private List<Map<String, Object>> messages(Session session, List<Session.Segment> segments) {
-        StringBuilder user = new StringBuilder("整场句子如下：\n");
+        StringBuilder user = new StringBuilder("待纠偏句子如下：\n");
         for (Session.Segment segment : segments) {
             user.append('[').append(segment.segmentId()).append("] ("
                     ).append(formatTime(segment.startMs())).append(") 原文: ")
@@ -129,7 +211,7 @@ public class FinalCorrectionService {
         return "你是 BabelFlux 会后完整纠偏模块。领域：" + value(session.getDomain(), "通用")
                 + "；源语言：" + value(session.getSourceLanguage(), "auto") + "；目标语言："
                 + value(session.getTargetLanguage(), "zh") + "。领域策略：" + focus + "\n"
-                + "通读整场原文和实时译文，为每句输出最终译文；仅修正明确的误译、术语、人名、数字、单位、否定或语义错误，不能扩写。"
+                + "通读提供的原文和实时译文，为每句输出最终译文；仅修正明确的误译、术语、人名、数字、单位、否定或语义错误，不能扩写。"
                 + "仅输出 JSON：{\"summary\":\"...\",\"qualityNotes\":\"...\","
                 + "\"glossaryHits\":[{\"term\":\"...\",\"translation\":\"...\"}],"
                 + "\"segments\":[{\"id\":\"...\",\"finalTranslation\":\"...\"}],"
@@ -221,6 +303,13 @@ public class FinalCorrectionService {
     }
 
     private static long elapsed(long started) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started); }
+    private static List<List<Session.Segment>> partition(List<Session.Segment> segments, int batchSize) {
+        List<List<Session.Segment>> batches = new ArrayList<>();
+        for (int from = 0; from < segments.size(); from += batchSize) {
+            batches.add(List.copyOf(segments.subList(from, Math.min(segments.size(), from + batchSize))));
+        }
+        return List.copyOf(batches);
+    }
     private static boolean passesCompletenessGuard(String live, String candidate) {
         String normalizedLive = compact(live);
         String normalizedCandidate = compact(candidate);
