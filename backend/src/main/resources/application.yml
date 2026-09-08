@@ -36,6 +36,7 @@ babelflux:
     redis-enabled: ${REDIS_ENABLED:false}
     rabbitmq-enabled: ${RABBITMQ_ENABLED:false}
     elasticsearch-enabled: ${ELASTICSEARCH_ENABLED:false}
+    elasticsearch-index-replicas: ${ELASTICSEARCH_INDEX_REPLICAS:1}
     mysql-enabled: ${MYSQL_ENABLED:false}
   dashscope:
     api-key: ${DASHSCOPE_API_KEY:}
