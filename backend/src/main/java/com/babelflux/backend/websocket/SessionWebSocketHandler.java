@@ -33,6 +33,8 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     private final RealtimeSessionRunner runner;
     private final SessionEventHub eventHub;
     private final ConcurrentMap<String, RealtimeSessionRunner.RunHandle> runs = new ConcurrentHashMap<>();
+    /** One primary realtime runner is allowed per session; handoff sockets are read-only. */
+    private final ConcurrentMap<String, String> activeSessionSockets = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, SessionEventHub.Subscription> handoffSubscriptions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Future<?>> handoffTasks = new ConcurrentHashMap<>();
     private final ExecutorService handoffExecutor = Executors.newVirtualThreadPerTaskExecutor();
@@ -97,29 +99,47 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             }
             synchronized (runs) {
                 if (runs.containsKey(socket.getId())) return;
+                if (activeSessionSockets.putIfAbsent(id, socket.getId()) != null) {
+                    send(socket, Map.of("type", "error", "message", "会话已在其他连接中运行"));
+                    return;
+                }
                 session.applyOverrides(text(payload, "sourceLanguage"), text(payload, "targetLanguage"),
                         text(payload, "domain"), text(payload, "inputMode"), text(payload, "sourceUrl"),
                         text(payload, "modelProfile"));
                 session.start();
                 AtomicBoolean reportEmitted = new AtomicBoolean();
                 AtomicReference<RealtimeSessionRunner.RunHandle> handleRef = new AtomicReference<>();
-                RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> {
-                    if ("session_report".equals(event.get("type"))) {
-                        reportEmitted.set(true);
-                        RealtimeSessionRunner.RunHandle current = handleRef.get();
-                        if (current != null) runs.remove(socket.getId(), current);
+                try {
+                    RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> {
+                        if ("session_report".equals(event.get("type"))) {
+                            reportEmitted.set(true);
+                            RealtimeSessionRunner.RunHandle current = handleRef.get();
+                            if (current != null) runs.remove(socket.getId(), current);
+                            activeSessionSockets.remove(id, socket.getId());
+                        }
+                        eventHub.publish(id, event);
+                        if ("session_report".equals(event.get("type"))) eventHub.complete(id);
+                        send(socket, event);
+                    });
+                    handleRef.set(handle);
+                    runs.put(socket.getId(), handle);
+                    if (reportEmitted.get()) {
+                        runs.remove(socket.getId(), handle);
+                        activeSessionSockets.remove(id, socket.getId());
                     }
-                    eventHub.publish(id, event);
-                    if ("session_report".equals(event.get("type"))) eventHub.complete(id);
-                    send(socket, event);
-                });
-                handleRef.set(handle);
-                runs.put(socket.getId(), handle);
-                if (reportEmitted.get()) runs.remove(socket.getId(), handle);
+                } catch (RuntimeException | Error error) {
+                    activeSessionSockets.remove(id, socket.getId());
+                    throw error;
+                }
             }
         } else if ("stop_session".equals(type) || "audio_end".equals(type)) {
             RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
             if (handle == null) {
+                String owner = activeSessionSockets.get(id);
+                if (owner != null && !owner.equals(socket.getId())) {
+                    send(socket, Map.of("type", "error", "message", "会话正在其他连接中运行"));
+                    return;
+                }
                 var report = sessions.finish(id);
                 send(socket, Map.of("type", "session_report", "reportId", report.reportId(),
                         "correctionStatus", report.correctionStatus()));
@@ -171,6 +191,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     public void afterConnectionClosed(WebSocketSession socket, CloseStatus status) {
         RealtimeSessionRunner.RunHandle handle = runs.remove(socket.getId());
         if (handle != null) handle.stop();
+        activeSessionSockets.remove(pathVariable(socket, "sessionId"), socket.getId());
         SessionEventHub.Subscription subscription = handoffSubscriptions.remove(socket.getId());
         if (subscription != null) eventHub.unsubscribe(subscription);
         Future<?> task = handoffTasks.remove(socket.getId());
