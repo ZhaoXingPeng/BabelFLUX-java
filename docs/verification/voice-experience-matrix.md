@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.10（2026-09-09）
+版本：v1.11（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -35,6 +35,7 @@
 | U-17 | 跨实例重复结束会话 | 两个后端实例共享 MySQL，两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告；报告生成、纠偏调用和生命周期事件均不重复 | PASS：修复后 8013/8014 均返回同一 reportId，MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-18 | 跨实例 handoff 字幕投送 | 主 WS 与 handoff WS 连接不同后端实例，主端启动真实会话 | handoff 端收到与主端相同的字幕、状态和 session_report，不出现“已连接但无字幕” | PASS：8013 主端与 8014 handoff 各收到 6 个启动/字幕事件及同一 `session_report` |
 | U-19 | 跨实例启动状态即时可见 | 8013 创建会话并发送带语言/领域覆盖的 `start_session`，立即从 8014 查询历史 | 查询立即显示 `running` 及本次覆盖参数，不需等会话结束 | PASS：当前提交 `dc29ad9` 实测 250 ms 内读到 `running/ja/en/running-state-real/balanced`；结束后两实例历史一致 |
+| U-20 | 报告时长准确 | 发送约 3 秒真实语音，等待 provider/纠偏完成后查看历史和报告 | 报告时长跟随音频时间轴，不因后端处理等待膨胀 | PASS：修复后百炼 5 次报告均为 3004 ms；墙钟完成 4156–8748 ms，时长不随处理等待变化 |
 
 ## 用户不可见的底层矩阵
 
@@ -59,6 +60,7 @@
 | I-17 | 控制状态 fan-out | `pause_session` / `resume_session` 构造 `source_sync_state`，统一经 `SessionEventHub.publish` 后回发主连接 | PASS：修复前 handoff 只有 ready；修复后真实双实例均收到暂停/恢复状态；handoff 不具备 runner 控制权 |
 | I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | PASS：H2/JDBC 与 handler 测试 14/14；真实 MySQL 查询启动后即为 running，最终 `segments_json`=2、`report_json` 非空，outbox 生命周期事件各 1 条 |
 | I-19 | 最新快照原子最终化 | runner 等待纠偏任务后将内存 `Session` 交给带行锁的 `finish(Session)`，报告与最终快照一次保存；瞬时写入失败最多重试一次 | PASS：H2 JDBC 故障注入首次最终写入失败后重试成功，报告仍含 2 段；真实 MySQL 最终行与报告均为 2 段，生命周期事件各 1 条 |
+| I-20 | 音频时长与处理耗时隔离 | `SessionReportService` 有字幕时使用 segment endMs 时间轴；空会话才使用 wall-clock fallback | PASS：受控 60 s wall-clock/3004 ms segment 测试返回 3004 ms；真实百炼 5/5 返回 3004 ms，MySQL 与 REST 一致 |
 
 ## 固定测量记录
 
@@ -351,6 +353,22 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 故障注入：H2 JDBC repository 在第一次 `ended + report` 保存时抛出 transient write failure；第二次最终化成功，保存调用为 3 次，报告 metrics.segments=2
 失败样例与边界：本次真实链路使用 demo provider 验证最终化与中间件一致性；数据库持续不可用、纠偏服务长超时、跨地域锁等待和 20 分钟长时稳定性仍未覆盖
 结论：I-19 已从“旧数据库快照最终化、一次写入失败即停”收敛为“最新内存快照带锁最终化并有界重试”；跨实例生命周期事件保持单份
+```
+
+### 2026-09-09 百炼报告音频时长隔离真实回归（Issue #68）
+
+```text
+提交：fix/report-audio-duration @ 5577187
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+输入与模型：百炼 `qwen3-tts-flash-realtime` 生成 16 kHz PCM 96,136 bytes；LiveTranslate 使用默认实时模型，目标中文
+修复前：一次真实 session 报告 `durationMs=60960`，但唯一字幕 segment `endMs=3004`；provider/纠偏等待被计入用户会议时长
+修复后：5 次真实 session ID 分别为 `6d2c2260`、`ee6f7ac7`、`92381499`、`044a36d7`、`17d485b2`；墙钟完成 8748/4810/4558/4156/4971 ms，报告时长均为 3004 ms，均 1 段、1 个 translation final、1 个 session_report、0 error
+底层证据：每个 MySQL session 行均为 `ended`、segments_json 1 段、report_json 非空；outbox `session.created=1`、`session.finished=1`、`report.generated=1`；8013/8014 REST 历史一致
+测试：`mvn -B '-Dtest=SessionReportServiceTest,RealtimeSessionRunnerTest' test`，8/8 通过；受控 60 s wall-clock/3004 ms segment 测试固定返回 3004 ms，空会话仍返回 60000 ms
+失败样例与边界：segment 时间戳只覆盖已识别语句，长静音且无字幕的精确媒体时长仍需独立 source duration 字段；本轮不宣称长时稳定性或 P95 处理延迟优化
+结论：U-20/I-20 已从“报告时长受后端等待污染”修复为“有字幕时使用音频时间轴、空会话墙钟兜底”；用户看到的会议时长不再随 provider/纠偏耗时变化
 ```
 
 ## 当前结论
