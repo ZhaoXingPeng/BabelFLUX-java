@@ -147,7 +147,9 @@ polling, while an expired lease remains recoverable. The delivery contract is
 still at-least-once, so consumers must keep their `event_id` idempotency check.
 
 Enable Elasticsearch explicitly with `ELASTICSEARCH_ENABLED=true` after
-provisioning it. Reports are indexed as idempotent documents in the versioned
+provisioning it. Set `ELASTICSEARCH_INDEX_REPLICAS=0` for a single-node local
+instance; keep the default `1` (or set it explicitly) for a multi-node
+production cluster. Reports are indexed as idempotent documents in the versioned
 `babelflux-reports-v1` index. Search is exposed at
 `GET /api/reports/search?q=&sourceLanguage=&domain=&from=&to=&page=&size=`;
 results return `reportId` and `sessionId` so MySQL remains the source of truth.

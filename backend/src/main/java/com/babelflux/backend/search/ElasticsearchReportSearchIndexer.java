@@ -1,7 +1,11 @@
 package com.babelflux.backend.search;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.indices.PutIndicesSettingsRequest;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.babelflux.backend.config.BabelFluxProperties;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,12 +18,15 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
+import org.springframework.data.elasticsearch.client.elc.ElasticsearchTemplate;
 import org.springframework.data.elasticsearch.core.document.Document;
 import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
 import org.springframework.data.elasticsearch.core.query.Criteria;
 import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
 import org.springframework.data.elasticsearch.core.query.IndexQuery;
 import org.springframework.data.elasticsearch.core.query.IndexQueryBuilder;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -46,10 +53,26 @@ public class ElasticsearchReportSearchIndexer implements ReportSearchIndexer, Re
 
     private final ElasticsearchOperations operations;
     private final ObjectMapper mapper;
+    private final ElasticsearchClient client;
+    private final int indexReplicas;
 
-    public ElasticsearchReportSearchIndexer(ElasticsearchOperations operations, ObjectMapper mapper) {
+    @Autowired
+    public ElasticsearchReportSearchIndexer(ElasticsearchOperations operations, ObjectMapper mapper,
+            BabelFluxProperties properties, ObjectProvider<ElasticsearchClient> clientProvider) {
+        this(operations, mapper, properties.getInfrastructure().getElasticsearchIndexReplicas(),
+                clientProvider.getIfAvailable());
+    }
+
+    ElasticsearchReportSearchIndexer(ElasticsearchOperations operations, ObjectMapper mapper,
+            int indexReplicas, ElasticsearchClient client) {
         this.operations = operations;
         this.mapper = mapper;
+        this.indexReplicas = indexReplicas;
+        this.client = client;
+    }
+
+    public ElasticsearchReportSearchIndexer(ElasticsearchOperations operations, ObjectMapper mapper) {
+        this(operations, mapper, 1, null);
     }
 
     @Override
@@ -118,8 +141,23 @@ public class ElasticsearchReportSearchIndexer implements ReportSearchIndexer, Re
     private void ensureIndex() {
         var index = operations.indexOps(INDEX_COORDINATES);
         if (!index.exists()) {
-            index.create();
+            index.create(Map.of("number_of_replicas", Integer.toString(indexReplicas)));
             index.putMapping(Document.parse(MAPPING));
+        } else if (client != null || operations instanceof ElasticsearchTemplate) {
+            try {
+                PutIndicesSettingsRequest request = new PutIndicesSettingsRequest.Builder().index(INDEX)
+                        .settings(settings -> settings.numberOfReplicas(Integer.toString(indexReplicas))).build();
+                if (client != null) {
+                    client.indices().putSettings(request);
+                } else {
+                    ((ElasticsearchTemplate) operations).execute(es -> {
+                        es.indices().putSettings(request);
+                        return null;
+                    });
+                }
+            } catch (IOException error) {
+                throw new IllegalStateException("Elasticsearch index settings could not be updated", error);
+            }
         }
     }
 }

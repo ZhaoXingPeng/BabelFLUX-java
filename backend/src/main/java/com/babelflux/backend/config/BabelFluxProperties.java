@@ -32,6 +32,7 @@ public class BabelFluxProperties {
         private boolean redisEnabled;
         private boolean rabbitmqEnabled;
         private boolean elasticsearchEnabled;
+        private int elasticsearchIndexReplicas = 1;
 
         public boolean isRedisEnabled() { return redisEnabled; }
         public void setRedisEnabled(boolean redisEnabled) { this.redisEnabled = redisEnabled; }
@@ -39,5 +40,10 @@ public class BabelFluxProperties {
         public void setRabbitmqEnabled(boolean rabbitmqEnabled) { this.rabbitmqEnabled = rabbitmqEnabled; }
         public boolean isElasticsearchEnabled() { return elasticsearchEnabled; }
         public void setElasticsearchEnabled(boolean elasticsearchEnabled) { this.elasticsearchEnabled = elasticsearchEnabled; }
+        public int getElasticsearchIndexReplicas() { return elasticsearchIndexReplicas; }
+        public void setElasticsearchIndexReplicas(int elasticsearchIndexReplicas) {
+            if (elasticsearchIndexReplicas < 0) throw new IllegalArgumentException("Elasticsearch replicas cannot be negative");
+            this.elasticsearchIndexReplicas = elasticsearchIndexReplicas;
+        }
     }
 }
