@@ -110,6 +110,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                         if (current != null) runs.remove(socket.getId(), current);
                     }
                     eventHub.publish(id, event);
+                    if ("session_report".equals(event.get("type"))) eventHub.complete(id);
                     send(socket, event);
                 });
                 handleRef.set(handle);
