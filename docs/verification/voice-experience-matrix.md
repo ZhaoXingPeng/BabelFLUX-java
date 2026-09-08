@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.9（2026-09-09）
+版本：v1.10（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -58,6 +58,7 @@
 | I-16 | Redis 实时事件 fan-out | `RedisMessageListenerContainer` 订阅 `babelflux:events:session:*`；消息 envelope 携带 publisher，远端只写入本地 bounded history/queue，忽略自身回环 | PASS：真实 8013->Redis 6380->8014 handoff 收到字幕和终态；Pub/Sub 无持久重放、Redis 故障边界已记录 |
 | I-17 | 控制状态 fan-out | `pause_session` / `resume_session` 构造 `source_sync_state`，统一经 `SessionEventHub.publish` 后回发主连接 | PASS：修复前 handoff 只有 ready；修复后真实双实例均收到暂停/恢复状态；handoff 不具备 runner 控制权 |
 | I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | PASS：H2/JDBC 与 handler 测试 14/14；真实 MySQL 查询启动后即为 running，最终 `segments_json`=2、`report_json` 非空，outbox 生命周期事件各 1 条 |
+| I-19 | 最新快照原子最终化 | runner 等待纠偏任务后将内存 `Session` 交给带行锁的 `finish(Session)`，报告与最终快照一次保存；瞬时写入失败最多重试一次 | PASS：H2 JDBC 故障注入首次最终写入失败后重试成功，报告仍含 2 段；真实 MySQL 最终行与报告均为 2 段，生命周期事件各 1 条 |
 
 ## 固定测量记录
 
@@ -335,6 +336,21 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 测试：`mvn -B '-Dtest=JdbcSessionRepositoryTest,SessionWebSocketHandlerTest' test`，14/14 通过；前后端健康检查均 HTTP 200/`{"status":"ok"}`
 失败样例与边界：本次使用 demo provider 验证持久化时序，不宣称百炼实时 ASR 延迟；启动异常回滚由 handler 测试覆盖，数据库故障重试和长时稳定性仍未测
 结论：U-19/I-18 从“结束时才可见”修复为“启动后跨实例立即可见”；启动快照成为 runner 创建前的持久化边界，避免刷新/切实例看到过期状态
+```
+
+### 2026-09-09 最新会话快照最终化真实回归（Issue #66）
+
+```text
+提交：fix/session-finalize-snapshot @ 4508284
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+实验：8013 创建 demo session `6357038b-0943-41fd-bfac-5202f60ecb02`，WS 启动并发送覆盖参数后立即结束；runner 直接以最新内存快照最终化
+用户可见结果：8013/8014 历史均显示 `ended`、2 段字幕、同一 reportId=`6357038b-0943-41fd-bfac-5202f60ecb02-report`；没有出现报告缺失或最后字幕丢失
+底层证据：MySQL 最终行 `ended/ja/en/running-state-real/balanced`，`segments_json`=2、`report_json` 非空；outbox `session.created=1`、`session.finished=1`、`report.generated=1`
+故障注入：H2 JDBC repository 在第一次 `ended + report` 保存时抛出 transient write failure；第二次最终化成功，保存调用为 3 次，报告 metrics.segments=2
+失败样例与边界：本次真实链路使用 demo provider 验证最终化与中间件一致性；数据库持续不可用、纠偏服务长超时、跨地域锁等待和 20 分钟长时稳定性仍未覆盖
+结论：I-19 已从“旧数据库快照最终化、一次写入失败即停”收敛为“最新内存快照带锁最终化并有界重试”；跨实例生命周期事件保持单份
 ```
 
 ## 当前结论
