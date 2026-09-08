@@ -6,6 +6,7 @@ import com.babelflux.backend.domain.SessionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -17,10 +18,12 @@ import org.springframework.transaction.annotation.Transactional;
 @ConditionalOnProperty(prefix = "babelflux.infrastructure", name = "elasticsearch-enabled", havingValue = "true")
 public class ReportIndexingService implements ReportIndexingPort {
     private static final Logger log = LoggerFactory.getLogger(ReportIndexingService.class);
+    private static final long LEASE_SECONDS = 60;
     private final JdbcReportIndexJobStore jobs;
     private final ReportSearchIndexer indexer;
     private final SessionRepository sessions;
     private final ObjectMapper mapper;
+    private final String owner = "indexer-" + UUID.randomUUID();
 
     public ReportIndexingService(JdbcReportIndexJobStore jobs, ReportSearchIndexer indexer,
                                  SessionRepository sessions, ObjectMapper mapper) {
@@ -39,12 +42,13 @@ public class ReportIndexingService implements ReportIndexingPort {
     @Scheduled(fixedDelayString = "${babelflux.search.relay-interval-ms:1000}")
     public void processPending() {
         for (JdbcReportIndexJobStore.PendingJob job : jobs.pending(100)) {
+            if (!jobs.tryClaim(job.reportId(), owner, Instant.now().plusSeconds(LEASE_SECONDS))) continue;
             try {
                 indexer.index(job.reportId(), mapper.readValue(job.payload(), new TypeReference<>() {}));
-                jobs.markIndexed(job.reportId());
+                jobs.markIndexed(job.reportId(), owner);
             } catch (Exception error) {
                 long backoffSeconds = Math.min(300, 1L << Math.min(job.attempts(), 8));
-                jobs.markFailed(job.reportId(), Instant.now().plusSeconds(backoffSeconds), error.getMessage());
+                jobs.markFailed(job.reportId(), owner, Instant.now().plusSeconds(backoffSeconds), error.getMessage());
                 log.warn("report index failed reportId={} attempt={} nextRetrySeconds={}",
                         job.reportId(), job.attempts() + 1, backoffSeconds, error);
             }
