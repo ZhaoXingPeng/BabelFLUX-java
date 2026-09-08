@@ -203,6 +203,39 @@ class SessionWebSocketHandlerTest {
         handler.afterConnectionClosed(socket, CloseStatus.NORMAL);
     }
 
+    @Test
+    void broadcastsPauseAndResumeStateToHandoffSocket() throws Exception {
+        SessionEventHub hub = new SessionEventHub();
+        handler = new SessionWebSocketHandler(mapper, sessions, tokens, runner, hub);
+        String primaryToken = tokens.issue("ws-1");
+        var handoff = tokens.issueHandoff("ws-1", null, "en", "zh", "bilingual");
+        String handoffToken = tokens.issueHandoffWebSocket("ws-1", handoff.expiresAt());
+        WebSocketSession primary = socket("ws-1", primaryToken);
+        WebSocketSession handoffSocket = socket("ws-1", handoffToken);
+        when(primary.getId()).thenReturn("primary");
+        when(handoffSocket.getId()).thenReturn("handoff");
+        when(runner.start(any(Session.class), any())).thenReturn(run);
+
+        handler.afterConnectionEstablished(primary);
+        handler.afterConnectionEstablished(handoffSocket);
+        handler.handleTextMessage(primary, new TextMessage("{\"type\":\"start_session\"}"));
+        handler.handleTextMessage(primary, new TextMessage("{\"type\":\"pause_session\"}"));
+        handler.handleTextMessage(primary, new TextMessage("{\"type\":\"resume_session\"}"));
+
+        var messages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        verify(handoffSocket, timeout(1000).atLeast(3)).sendMessage(messages.capture());
+        List<String> states = messages.getAllValues().stream()
+                .map(message -> read(message).path("state").path("message").asText())
+                .filter(message -> !message.isBlank())
+                .toList();
+        assertTrue(states.contains("会话已暂停"));
+        assertTrue(states.contains("会话已恢复"));
+        verify(run).pause();
+        verify(run).resume();
+        handler.afterConnectionClosed(primary, CloseStatus.NORMAL);
+        handler.afterConnectionClosed(handoffSocket, CloseStatus.NORMAL);
+    }
+
     private WebSocketSession socket(String sessionId, String token) {
         WebSocketSession socket = mock(WebSocketSession.class);
         when(socket.getId()).thenReturn("socket-" + sessionId);
@@ -216,5 +249,13 @@ class SessionWebSocketHandlerTest {
         var captor = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
         verify(socket, org.mockito.Mockito.atLeastOnce()).sendMessage(captor.capture());
         return mapper.readTree(captor.getAllValues().getLast().getPayload());
+    }
+
+    private JsonNode read(TextMessage message) {
+        try {
+            return mapper.readTree(message.getPayload());
+        } catch (Exception error) {
+            throw new AssertionError(error);
+        }
     }
 }

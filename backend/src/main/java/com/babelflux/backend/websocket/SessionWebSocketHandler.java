@@ -216,11 +216,11 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         } else if ("pause_session".equals(type)) {
             RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
             if (handle != null) handle.pause();
-            send(socket, Map.of("type", "source_sync_state", "state", Map.of("status", "missing", "lagMs", 0, "message", "会话已暂停")));
+            broadcastSourceState(id, socket, "missing", "会话已暂停");
         } else if ("resume_session".equals(type)) {
             RealtimeSessionRunner.RunHandle handle = runs.get(socket.getId());
             if (handle != null) handle.resume();
-            send(socket, Map.of("type", "source_sync_state", "state", Map.of("status", "listening", "lagMs", 0, "message", "会话已恢复")));
+            broadcastSourceState(id, socket, "listening", "会话已恢复");
         } else {
             send(socket, Map.of("type", "error", "message", "Unsupported client event"));
         }
@@ -332,6 +332,14 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         synchronized (socket) {
             socket.sendMessage(new TextMessage(mapper.writeValueAsString(body)));
         }
+    }
+
+    private void broadcastSourceState(String sessionId, WebSocketSession primary,
+                                       String status, String message) throws IOException {
+        Map<String, Object> event = Map.of("type", "source_sync_state",
+                "state", Map.of("status", status, "lagMs", 0, "message", message));
+        eventHub.publish(sessionId, event);
+        send(primary, event);
     }
     private static String text(JsonNode payload, String field) {
         JsonNode value = payload == null ? null : payload.get(field);
