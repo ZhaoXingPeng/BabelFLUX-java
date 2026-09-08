@@ -41,9 +41,6 @@ create table if not exists babelflux_session_event_outbox (
     lease_until timestamp null
 );
 
-alter table babelflux_session_event_outbox add column if not exists lease_owner varchar(128);
-alter table babelflux_session_event_outbox add column if not exists lease_until timestamp null;
-
 create table if not exists babelflux_session_event_receipts (
     event_id varchar(64) primary key,
     event_type varchar(128) not null,

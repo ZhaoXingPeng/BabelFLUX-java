@@ -145,3 +145,8 @@ idempotent, but delivery latency and retry counts must be measured separately.
 
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.
+
+The checked-in `schema.sql` is safe for fresh H2/MySQL databases. Additive
+lease columns for older databases are applied by `JdbcSchemaMigration` using
+JDBC metadata rather than vendor-specific `ADD COLUMN IF NOT EXISTS` syntax;
+this keeps repeated startup idempotent on MySQL 8 as well as H2.
