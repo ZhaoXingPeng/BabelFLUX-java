@@ -152,6 +152,48 @@ class RealtimeSessionRunnerTest {
     }
 
     @Test
+    void liveRunRefreshesPersistedSourceWhenTranslationFinalArrivesFirst() throws Exception {
+        InMemorySessionRepository repository = new InMemorySessionRepository();
+        DashScopeProperties properties = new DashScopeProperties();
+        properties.setApiKey("test-key");
+        SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
+                mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
+        Session session = Session.create("event-order-run", "live", "en", "zh", "通用", "默认",
+                "quick", "live", "microphone", null, "idle", false, List.of());
+        repository.save(session);
+
+        DashScopeRealtimeClient realtime = mock(DashScopeRealtimeClient.class);
+        DashScopeRealtimeClient.LiveSession provider = mock(DashScopeRealtimeClient.LiveSession.class);
+        when(realtime.connect(any())).thenReturn(provider);
+        List<DashScopeRealtimeClient.NormalizedEvent> incoming = List.of(
+                new DashScopeRealtimeClient.NormalizedEvent("speech_started", "", new byte[0], "item-1", null, Map.of()),
+                new DashScopeRealtimeClient.NormalizedEvent("source_partial", "Hello", new byte[0], "item-1", null, Map.of()),
+                new DashScopeRealtimeClient.NormalizedEvent("response_created", "", new byte[0], null, "response-1", Map.of()),
+                new DashScopeRealtimeClient.NormalizedEvent("translation_final", "你好世界", new byte[0], null, "response-1", Map.of()),
+                new DashScopeRealtimeClient.NormalizedEvent("source_final", "Hello world", new byte[0], "item-1", null, Map.of()));
+        AtomicInteger index = new AtomicInteger();
+        AtomicBoolean finished = new AtomicBoolean();
+        when(provider.receive(any(Duration.class))).thenAnswer(invocation -> {
+            int current = index.getAndIncrement();
+            if (current < incoming.size()) return incoming.get(current);
+            return finished.get() ? new DashScopeRealtimeClient.NormalizedEvent(
+                    "session_finished", "", new byte[0], null, null, Map.of()) : null;
+        });
+        org.mockito.Mockito.doAnswer(invocation -> { finished.set(true); return null; }).when(provider).finish();
+
+        RealtimeSessionRunner runner = new RealtimeSessionRunner(realtime, properties, service);
+        RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> { });
+        handle.acceptAudio(new byte[1_280]);
+        handle.stop();
+        handle.await(Duration.ofSeconds(3));
+
+        assertEquals(1, session.getSegments().size());
+        assertEquals("Hello world", session.getSegments().getFirst().sourceText());
+        assertEquals("你好世界", session.getSegments().getFirst().translationText());
+        runner.shutdown();
+    }
+
+    @Test
     void liveRunReplacesCumulativeProviderStashInsteadOfDuplicatingText() throws Exception {
         InMemorySessionRepository repository = new InMemorySessionRepository();
         DashScopeProperties properties = new DashScopeProperties();
