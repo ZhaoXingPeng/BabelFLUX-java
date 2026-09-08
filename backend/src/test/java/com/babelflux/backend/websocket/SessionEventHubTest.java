@@ -22,4 +22,28 @@ class SessionEventHubTest {
         assertEquals("translation_segment", next.get("type"));
         hub.unsubscribe(subscription);
     }
+
+    @Test
+    void releasesCompletedChannelAfterLastSubscriberLeaves() {
+        SessionEventHub hub = new SessionEventHub();
+        SessionEventHub.Subscription subscription = hub.subscribe("session-1");
+        hub.publish("session-1", Map.of("type", "session_report"));
+
+        hub.complete("session-1");
+        assertEquals(1, hub.channelCount());
+        hub.unsubscribe(subscription);
+
+        assertEquals(0, hub.channelCount());
+    }
+
+    @Test
+    void purgesIdleChannelsWithoutSubscribers() {
+        SessionEventHub hub = new SessionEventHub();
+        hub.publish("session-1", Map.of("type", "transcript_segment"));
+        assertEquals(1, hub.channelCount());
+
+        hub.cleanupExpired(System.nanoTime() + TimeUnit.MINUTES.toNanos(5) + 1);
+
+        assertEquals(0, hub.channelCount());
+    }
 }

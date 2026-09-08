@@ -9,6 +9,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,12 +21,15 @@ import org.springframework.stereotype.Component;
 public class SessionEventHub {
     private static final int HISTORY_LIMIT = 200;
     private static final int SUBSCRIBER_QUEUE_LIMIT = 100;
+    private static final long IDLE_TTL_NANOS = TimeUnit.MINUTES.toNanos(5);
     private final Map<String, Channel> channels = new ConcurrentHashMap<>();
 
     public void publish(String sessionId, Map<String, Object> event) {
         if (sessionId == null || sessionId.isBlank() || event == null) return;
         Channel channel = channels.computeIfAbsent(sessionId, ignored -> new Channel());
         synchronized (channel) {
+            if (channel.completed) return;
+            channel.lastActivityNanos = System.nanoTime();
             channel.history.addLast(Map.copyOf(event));
             while (channel.history.size() > HISTORY_LIMIT) channel.history.removeFirst();
             for (BlockingQueue<Map<String, Object>> queue : channel.subscribers) offerLatest(queue, Map.copyOf(event));
@@ -37,6 +41,7 @@ public class SessionEventHub {
         BlockingQueue<Map<String, Object>> queue = new LinkedBlockingQueue<>(SUBSCRIBER_QUEUE_LIMIT);
         List<Map<String, Object>> replay;
         synchronized (channel) {
+            channel.lastActivityNanos = System.nanoTime();
             replay = List.copyOf(channel.history);
             channel.subscribers.add(queue);
         }
@@ -47,11 +52,39 @@ public class SessionEventHub {
         if (subscription == null) return;
         synchronized (subscription.channel()) {
             subscription.channel().subscribers.remove(subscription.queue());
-            if (subscription.channel().subscribers.isEmpty() && subscription.channel().history.isEmpty()) {
+            if (subscription.channel().subscribers.isEmpty() && subscription.channel().completed) {
                 channels.remove(subscription.sessionId(), subscription.channel());
             }
         }
     }
+
+    /** Marks a session terminal so its replay history can be reclaimed after handoff sockets leave. */
+    public void complete(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        Channel channel = channels.get(sessionId);
+        if (channel == null) return;
+        synchronized (channel) {
+            channel.completed = true;
+            channel.lastActivityNanos = System.nanoTime();
+            if (channel.subscribers.isEmpty()) channels.remove(sessionId, channel);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${babelflux.websocket.event-hub-cleanup-ms:60000}")
+    void cleanupExpiredChannels() { cleanupExpired(System.nanoTime()); }
+
+    void cleanupExpired(long nowNanos) {
+        long cutoff = nowNanos - IDLE_TTL_NANOS;
+        channels.forEach((sessionId, channel) -> {
+            synchronized (channel) {
+                if (channel.subscribers.isEmpty() && channel.lastActivityNanos < cutoff) {
+                    channels.remove(sessionId, channel);
+                }
+            }
+        });
+    }
+
+    int channelCount() { return channels.size(); }
 
     private static void offerLatest(BlockingQueue<Map<String, Object>> queue, Map<String, Object> event) {
         if (queue.offer(event)) return;
@@ -62,6 +95,8 @@ public class SessionEventHub {
     static final class Channel {
         private final Deque<Map<String, Object>> history = new ArrayDeque<>();
         private final List<BlockingQueue<Map<String, Object>>> subscribers = new ArrayList<>();
+        private long lastActivityNanos = System.nanoTime();
+        private boolean completed;
     }
 
     public record Subscription(String sessionId, Channel channel,
