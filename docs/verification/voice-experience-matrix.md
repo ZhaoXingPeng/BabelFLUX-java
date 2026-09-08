@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.7（2026-09-09）
+版本：v1.8（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -23,7 +23,7 @@
 | U-05 | TTS 首包与格式 | `/api/models/tts/speech`，模型 `qwen3-tts-flash-realtime` | 返回非空 PCM，采样率/格式与请求一致 | PASS：5 次均 HTTP 200，24 kHz PCM，99840–115200 bytes，耗时 908/938/998/1008/1465 ms（P50 998，P95 1465） |
 | U-06 | ASR 可读性 | 将真实 TTS PCM 送入 `/api/models/asr/transcriptions` | final 文本可读，partial 最终收敛 | PASS：`fun-asr-realtime` 连续 5 次 HTTP 200，final 均为 `The bell flux voice smoke test.`；`qwen3-asr-flash-realtime` 独立 ASR 端点真实返回 `ModelNotFound`，已记录为账号/模型边界 |
 | U-07 | 多轮连续对话 | 5 轮短句 + 1 段 2 分钟语音 | 无断线/卡死，轮次顺序和字幕滚动正确 | NOT RUN：需固定语料和重复次数 |
-| U-08 | 暂停/恢复 | 语音流中发送 `pause_session` / `resume_session` | 前端状态一致，恢复后不重复或跳过明显内容 | NOT RUN：需真实设备/浏览器采集 |
+| U-08 | 暂停/恢复 | 主 WS 发送 `pause_session` / `resume_session`，同时观察跨实例 handoff | 主端和 handoff 状态一致，恢复后不重复或跳过明显内容 | PASS：真实 8013/8014 session `5215d44b-5b04-4b28-96e7-6ea3daec5c3a` 两端均收到“会话已暂停/会话已恢复”；MySQL 最终 `ended` 且报告存在 |
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
 | U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
@@ -55,6 +55,7 @@
 | I-14 | Redis 分布式 runner lease | `SET NX PX` 原子获取；Lua 按 owner 校验续租/释放；TTL 到期自动回收 | PASS：真实 Redis 6380 获取后 TTL 28759 ms；等待 12 s（含一次 10 s 续租）仍为 26749 ms；停止后 TTL=-2；MySQL outbox `session.finished=1`、`report.generated=1` |
 | I-15 | 跨 JVM 报告最终化幂等 | `JdbcSessionRepository.findByIdForUpdate` 在同一事务内锁定 session 行；第二事务读取已持久化 `report_json` 后直接复用 | PASS：H2 两事务并发测试和真实 MySQL 双实例回归均只调用一次生成器、只追加一组生命周期事件 |
 | I-16 | Redis 实时事件 fan-out | `RedisMessageListenerContainer` 订阅 `babelflux:events:session:*`；消息 envelope 携带 publisher，远端只写入本地 bounded history/queue，忽略自身回环 | PASS：真实 8013->Redis 6380->8014 handoff 收到字幕和终态；Pub/Sub 无持久重放、Redis 故障边界已记录 |
+| I-17 | 控制状态 fan-out | `pause_session` / `resume_session` 构造 `source_sync_state`，统一经 `SessionEventHub.publish` 后回发主连接 | PASS：修复前 handoff 只有 ready；修复后真实双实例均收到暂停/恢复状态；handoff 不具备 runner 控制权 |
 
 ## 固定测量记录
 
@@ -302,6 +303,22 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：跨实例 handoff 从“已连接但无字幕”恢复为可见双语字幕和终态报告；未把单 Redis Pub/Sub 结果宣称为 Streams/集群 HA
 ```
 
+### 2026-09-09 跨实例 handoff 暂停/恢复状态真实回归（Issue #62）
+
+```text
+提交：fix/websocket-handoff-sync @ 53f3e01
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 两个修复分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+修复前复现：session `fed42cf7-6b28-445f-8e05-1320a0e59cea` 主端收到“会话已暂停/会话已恢复”，8014 handoff 只有“演示同传引擎就绪”
+修复：`SessionWebSocketHandler` 将 pause/resume 的 `source_sync_state` 统一经 `SessionEventHub.publish` 广播，再直接回发主连接；handoff 仍只读
+修复后回归：session `5215d44b-5b04-4b28-96e7-6ea3daec5c3a` 两端均收到 `source_sync_state`：演示同传引擎就绪、会话已暂停、会话已恢复；字幕事件内容一致
+持久化证据：MySQL `babelflux_sessions.status=ended`、`report_json` 非空；outbox 为 `session.created=1`、`session.finished=1`、`report.generated=1`
+测试：`mvn -B '-Dtest=SessionWebSocketHandlerTest,SessionEventHubTest' test`，14/14 通过；前端 55/55 与构建门禁已在同一运行环境通过
+失败样例与边界：本次 Node WS 采集窗口未捕获 `session_report`，但数据库已确认报告落库；Redis Pub/Sub 故障窗口仍可能丢实时控制状态，MySQL 是生命周期事实源
+结论：U-08/I-17 跨实例暂停/恢复状态已从“主端可见、handoff 不可见”恢复为两端一致；不把 handoff 的只读订阅误标为控制权限
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07、U-09～U-12 的可复现证据，再讨论性能优化百分比。
