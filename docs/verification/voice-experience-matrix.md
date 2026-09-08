@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.15（2026-09-09）
+版本：v1.16（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -22,7 +22,7 @@
 | U-04 | 真实实时同传 | 16 kHz mono PCM 通过 WS 推送，发送 `audio_end` | 收到 transcript/translation，报告可下载，错误可见 | PASS：2026-09-09 重启后真实链路 final 源文为 `The bell flux voice smoke test.`，中文翻译和 `session_report` 均返回；修复前曾出现重复词 |
 | U-05 | TTS 首包与格式 | `/api/models/tts/speech`，模型 `qwen3-tts-flash-realtime` | 返回非空 PCM，采样率/格式与请求一致 | PASS：5 次均 HTTP 200，24 kHz PCM，99840–115200 bytes，耗时 908/938/998/1008/1465 ms（P50 998，P95 1465） |
 | U-06 | ASR 可读性 | 将真实 TTS PCM 送入 `/api/models/asr/transcriptions` | final 文本可读，partial 最终收敛 | PASS：`fun-asr-realtime` 连续 5 次 HTTP 200，final 均为 `The bell flux voice smoke test.`；`qwen3-asr-flash-realtime` 独立 ASR 端点真实返回 `ModelNotFound`，已记录为账号/模型边界 |
-| U-07 | 多轮连续对话 | 5 轮不同短句 + 20 轮连续 PCM，观察 WS 字幕与最终报告 | 无断线/卡死，轮次顺序和字幕滚动正确 | PARTIAL：5 轮不同句子修复后 5/5 段一致（session `97445ce4-dbbc-452b-b1bd-26a6190972f0`）；20 轮相同 PCM 实测仅 19 段、58 次 `lagging`、报告少 1 句（session `afe6b288-1d8f-4282-af8d-3d9747aebeb1`），见 Issue #76，不能宣称长时稳定 |
+| U-07 | 多轮连续对话 | 5 轮不同短句 + 20 轮连续 PCM，观察 WS 字幕与最终报告 | 无断线/卡死，轮次顺序和字幕滚动正确 | PARTIAL：修复后 20 轮实测 20/20 段、0 次 `lagging`、0 error、报告 20 段（session `96729368-a00d-4cce-8146-06433585e7f9`）；5 轮不同句子同样 5/5 段一致（session `97445ce4-dbbc-452b-b1bd-26a6190972f0`）。会后纠偏 `partial` 但完整实时译文已回退保留；尚未覆盖 20 分钟长时稳定性 |
 | U-08 | 暂停/恢复 | 主 WS 发送 `pause_session` / `resume_session`，同时观察跨实例 handoff | 主端和 handoff 状态一致，恢复后不重复或跳过明显内容 | PASS：真实 8013/8014 session `5215d44b-5b04-4b28-96e7-6ea3daec5c3a` 两端均收到“会话已暂停/会话已恢复”；MySQL 最终 `ended` 且报告存在 |
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
 | U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
@@ -42,7 +42,7 @@
 
 | ID | 关注点 | 设计/代码证据 | 当前证据 |
 | --- | --- | --- | --- |
-| I-01 | PCM 边界 | `RealtimeSessionRunner` 使用 25 帧有界队列，满载丢弃最旧帧并发送 lag 状态 | PASS：`RealtimeSessionRunnerTest`、`MediaPcmSourceTest` |
+| I-01 | PCM 边界 | `RealtimeSessionRunner` 使用可配置有界队列，默认 250 帧（10 秒），满载丢弃最旧帧并发送累计 lag 状态 | PASS：`RealtimeSessionRunnerTest` 覆盖 25 帧溢出和 250 帧排空；真实 20 轮 0 次 lagging |
 | I-02 | 音频时钟 | 发送音频时长与客户端 `media_clock` 分开计量，250 ms 节流并报告 lag | PASS：WebSocket 控制测试；真实长时观测未跑 |
 | I-03 | 段落绑定 | item/response ID 绑定，未绑定译文按 FIFO 归并，partial/final 分开 | PASS：`DashScopeRealtimeClientTest`、runner 测试 |
 | I-04 | 纠偏复杂度 | 纠偏只扫描固定窗口，按分钟限流；不扫描整场字幕 | PASS：`BoundedRevisionWindowTest`、`RealtimeRevisionServiceTest` |
@@ -52,7 +52,7 @@
 | I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3308、Redis 6380、RabbitMQ 4.3.5/OTP 28 5673、ES 9200 均有真实链路证据；Rabbit 包含断 broker 重试、重启恢复、重复投递幂等与 DLQ |
 | I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：两实例 ES live 竞争与过期 lease 恢复；H2 测试覆盖条件更新/幂等 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
-| I-11 | 队列 lag 计量 | PCM 队列容量 25 帧，丢弃最旧帧时按 `audio.size() * FRAME_MS` 计算 `lagMs` | PASS：`RealtimeSessionRunnerTest.reportsMeasuredQueueLagWhenInputOverrunsProvider` 断言 1000 ms；真实 WS 压测 172 次均为 1000 ms，无 0 ms 误报 |
+| I-11 | 队列 lag 计量 | PCM 队列默认 250 帧（可由 `REALTIME_QUEUE_FRAMES` 调整），丢弃最旧帧时按 `audio.size() * FRAME_MS` 计算 `lagMs`，并记录累计丢帧 | PASS：`RealtimeSessionRunnerTest.reportsMeasuredQueueLagWhenInputOverrunsProvider` 以 25 帧配置断言 1000 ms 和报告丢帧说明；默认 250 帧真实 20 轮无 lagging |
 | I-12 | 报告生成幂等 | `SessionService.finish` 以 sessionId 维护 in-flight future，合并并发结束调用 | PASS：`SessionServiceTest.concurrentFinishCallsGenerateAndPublishOneReport`；真实 MySQL 对照显示重复事件 2/2 -> 1/1 |
 | I-13 | 主 runner 所有权 | `SessionWebSocketHandler` 以 sessionId 原子占用主连接，handoff 保持只读 | PASS：`SessionWebSocketHandlerTest.rejectsSecondPrimarySocketForSameSession`；真实双 WS 仅一次 runner/一次生命周期事件 |
 | I-14 | Redis 分布式 runner lease | `SET NX PX` 原子获取；Lua 按 owner 校验续租/释放；TTL 到期自动回收 | PASS：真实 Redis 6380 获取后 TTL 28759 ms；等待 12 s（含一次 10 s 续租）仍为 26749 ms；停止后 TTL=-2；MySQL outbox `session.finished=1`、`report.generated=1` |
@@ -427,6 +427,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：U-12/I-23 的模型选择等待已从 30 s 级别降为 135 ms 本地反馈；握手预算与音频读取预算分离，后续仍需补 provider 错误事件分类
 ```
 
+### 2026-09-09 多轮实时输入排空与缓冲优化回归（Issue #76）
+
+```text
+提交：fix/voice-multiround-overflow @ 68d3a1f
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+输入格式：16 kHz mono PCM；20 轮相同 TTS PCM，每轮追加 1 秒静音，WS 每 40 ms 发送 3200 bytes
+模型与 provider：百炼 LiveTranslate 实时 ASR/翻译，ttsEnabled=false
+修复前：20 轮仅 19 段、58 次 `lagging`、报告少 1 句；`audio_end` 在队列满载时还会丢弃旧帧插入结束哨兵
+修复：默认 PCM 队列由 25 帧（1 秒）扩大为可配置 250 帧（10 秒）；结束请求改为“排空已接收帧后结束”；溢出事件携带累计 droppedFrames，报告质量说明记录丢帧帧数和时长
+修复后：session `96729368-a00d-4cce-8146-06433585e7f9` 20/20 final、20 段报告、0 次 `lagging`、0 error；wall 65,449 ms，媒体时间 80,080 ms；MySQL `segments_json`=20、report_json 非空；outbox `session.created=1`、`session.finished=1`、`report.generated=1`
+用户可见结果：连续 20 轮不再静默少句；若未来超过配置容量，页面会收到累计丢帧提示，报告质量说明会明确风险
+测试：`mvn -B '-Dtest=RealtimeSessionRunnerTest,SessionReportServiceTest' test` 11/11；完整后端测试待 PR CI 复核
+结论、失败样例与下一步：#76 的复现边界已修复并有真实回归证据；20 分钟长时稳定性、浏览器端 `bufferedAmount` 丢帧和更慢 provider 仍需独立压测
+```
+
 ### 2026-09-09 多轮连续输入失败回归（Issue #76）
 
 ```text
@@ -455,9 +472,9 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 修复后：session `97445ce4-dbbc-452b-b1bd-26a6190972f0` 为 5/5 段，报告原文与 WS final 一致；0 error；MySQL `ended`、report_json 非空；outbox 三类生命周期事件各 1 条
 用户可见结果：实时字幕、历史、报告和导出使用同一份最终原文
 测试：`mvn -B test` 108 passed、0 failed、4 skipped；前端 `npm run test` 55/55，`npm run build` 通过；CI 三项通过
-结论、失败样例与下一步：I-24 已修复并通过真实回归；provider 永不发送 source final、20 轮队列溢出仍是独立未解决边界
+结论、失败样例与下一步：I-24 已修复并通过真实回归；provider 永不发送 source final、20 分钟长时稳定性和浏览器端发送缓冲仍需独立验证
 ```
 
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。Issue #76 的 20 轮输入仍有少句，后续 PR 必须先补 U-07、U-09～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和音频前端算法能力。后续 PR 必须补 U-09～U-12 的可复现证据，再讨论性能优化百分比。
