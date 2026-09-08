@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.2（2026-09-09）
+版本：v1.3（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -29,6 +29,7 @@
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
 | U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PARTIAL：真实 `ModelNotFound` 已从误导性 502 修正为 HTTP 422 + 稳定 code/message；其余故障矩阵未跑完 |
 | U-13 | PCM 队列溢出反馈 | 真实后端 WS 快速注入 200 个 40 ms/1280 bytes PCM 帧 | 页面收到 lagging 状态且显示实际缓冲时长，随后可结束并拿到报告 | PASS：2026-09-09 后端 8005 + 百炼实时链路收到 172 次 `lagging`，`lagMs` 均为 1000（修复前同场景为 0），1.03 s 收到 `session_report` |
+| U-14 | 重复结束会话 | 两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告，用户不感知重复纠偏或重复事件 | PASS：修复后 8006 两端均返回同一 `reportId`；MySQL outbox `session.finished=1`、`report.generated=1` |
 
 ## 用户不可见的底层矩阵
 
@@ -45,6 +46,7 @@
 | I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：两实例 ES live 竞争与过期 lease 恢复；H2 测试覆盖条件更新/幂等 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
 | I-11 | 队列 lag 计量 | PCM 队列容量 25 帧，丢弃最旧帧时按 `audio.size() * FRAME_MS` 计算 `lagMs` | PASS：`RealtimeSessionRunnerTest.reportsMeasuredQueueLagWhenInputOverrunsProvider` 断言 1000 ms；真实 WS 压测 172 次均为 1000 ms，无 0 ms 误报 |
+| I-12 | 报告生成幂等 | `SessionService.finish` 以 sessionId 维护 in-flight future，合并并发结束调用 | PASS：`SessionServiceTest.concurrentFinishCallsGenerateAndPublishOneReport`；真实 MySQL 对照显示重复事件 2/2 -> 1/1 |
 
 ## 固定测量记录
 
@@ -205,6 +207,22 @@ P50/P95/P99：不适用（单次故障注入，指标验证不作性能分位数
 用户可见结果：状态消息显示“音频输入超过 1 秒缓冲，已丢弃最旧帧”，`lagMs=1000`；修复前同一溢出路径固定显示 `lagMs=0`
 底层日志与报告 ID：`RealtimeSessionRunner` 按有界队列实际帧数计算 `audio.size() * FRAME_MS`；报告 ID 如上
 结论、失败样例与下一步：Issue #47 根因和修复已由真实 WS 压力复现；随机噪声不验证 ASR 质量，长时/网络分区仍待独立矩阵
+```
+
+### 2026-09-09 并发结束会话幂等真实回归（Issue #50）
+
+```text
+时间与提交：2026-09-09 02:38（Asia/Hong_Kong），fix/session-finish-idempotency（提交前工作区）
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 修复分支 Java backend http://127.0.0.1:8006；MySQL 3307、Redis 6380、RabbitMQ 5673、ES 9200
+用例：POST /api/sessions(inputMode=demo) -> 两个 WS 客户端复用同一 token -> 并发发送 audio_end
+基线（8005，修复前）：两端均返回同一 reportId，但 MySQL outbox 为 `session.finished=2`、`report.generated=2`、总计 5 条（含 session.created）
+修复后（8006）：两端均在约 64 ms 返回同一 reportId `0bb646f7-7158-4667-81f3-f6c3e692d4ac-report`；outbox 为 `session.finished=1`、`report.generated=1`、总计 3 条
+用户可见结果：重复点击/断开竞态不会产生第二份报告，两个客户端结果一致
+底层证据：`SessionService` 的 in-flight `CompletableFuture` 使同一 session 只有一个生成者，其余调用等待并复用结果；不同 session 不共享 future
+测试：`mvn -B '-Dtest=SessionServiceTest' test` 1/1；全量后端 86 通过、0 失败、4 个外部中间件测试按默认配置跳过
+失败样例与边界：修复只覆盖单 JVM 内并发；跨多个 Java 实例仍需分布式锁/数据库版本列，暂不把本次结果写成 HA 证明
+结论：重复百炼纠偏和生命周期事件的本地竞态已消除，真实 MySQL 事件计数由 2/2 降为 1/1；跨实例幂等列为后续工作
 ```
 
 ## 当前结论
