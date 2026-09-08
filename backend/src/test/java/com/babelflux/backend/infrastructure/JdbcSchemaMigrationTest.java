@@ -18,7 +18,7 @@ class JdbcSchemaMigrationTest {
     }
 
     @Test
-    void addsMissingLeaseColumnsAndIsIdempotent() {
+    void addsMissingOutboxAndIndexJobColumnsAndIsIdempotent() {
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:schema-migration;DB_CLOSE_DELAY=-1", "sa", ""));
         jdbc.execute("create table babelflux_session_event_outbox (event_id varchar(64) primary key)");
@@ -28,7 +28,7 @@ class JdbcSchemaMigrationTest {
         migration.migrate();
         migration.migrate();
 
-        assertEquals(3, jdbc.queryForObject("select count(*) from information_schema.columns "
+        assertEquals(4, jdbc.queryForObject("select count(*) from information_schema.columns "
                 + "where upper(table_name)='BABELFLUX_SESSION_EVENT_OUTBOX'", Integer.class));
         assertEquals(3, jdbc.queryForObject("select count(*) from information_schema.columns "
                 + "where upper(table_name)='BABELFLUX_REPORT_INDEX_JOBS'", Integer.class));
@@ -36,5 +36,7 @@ class JdbcSchemaMigrationTest {
                 + "where upper(table_name)='BABELFLUX_SESSION_EVENT_OUTBOX' and upper(column_name)='LEASE_OWNER'", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from information_schema.columns "
                 + "where upper(table_name)='BABELFLUX_REPORT_INDEX_JOBS' and upper(column_name)='LEASE_UNTIL'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from information_schema.columns "
+                + "where upper(table_name)='BABELFLUX_SESSION_EVENT_OUTBOX' and upper(column_name)='LAST_ERROR'", Integer.class));
     }
 }

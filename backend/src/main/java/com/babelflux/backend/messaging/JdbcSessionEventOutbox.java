@@ -55,15 +55,18 @@ public class JdbcSessionEventOutbox {
 
     public void markPublished(String eventId, String owner) {
         jdbc.update("update babelflux_session_event_outbox set status='published', published_at=current_timestamp, "
-                + "lease_owner=null, lease_until=null where event_id=? and status='processing' and lease_owner=?",
+                + "last_error=null, lease_owner=null, lease_until=null where event_id=? "
+                + "and status='processing' and lease_owner=?",
                 eventId, owner);
     }
 
-    public void markFailed(String eventId, String owner, Instant nextAttemptAt) {
+    public void markFailed(String eventId, String owner, Instant nextAttemptAt, String error) {
+        String detail = error == null || error.isBlank() ? "unknown event delivery failure" : error;
+        if (detail.length() > 1000) detail = detail.substring(0, 1000);
         jdbc.update("update babelflux_session_event_outbox set status='pending', attempts=attempts+1, "
-                        + "next_attempt_at=?, lease_owner=null, lease_until=null "
+                        + "next_attempt_at=?, last_error=?, lease_owner=null, lease_until=null "
                         + "where event_id=? and status='processing' and lease_owner=?",
-                Timestamp.from(nextAttemptAt), eventId, owner);
+                Timestamp.from(nextAttemptAt), detail, eventId, owner);
     }
 
     private PendingEvent map(ResultSet row, int ignored) throws SQLException {

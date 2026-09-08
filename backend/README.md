@@ -59,6 +59,22 @@ WebSocket authentication/audio control. Docker-backed RabbitMQ and Elasticsearch
 explicitly opt-in with `RUN_RABBITMQ_IT=true` and
 `RUN_ELASTICSEARCH_IT=true`.
 
+The outbox persistence/recovery path also has an opt-in real MySQL check. Point
+it only at an isolated database with the application schema already applied;
+the test creates and removes one uniquely named event row.
+
+```bash
+RUN_MYSQL_IT=true \
+TEST_MYSQL_URL='jdbc:mysql://127.0.0.1:3308/babelflux_outbox_it' \
+TEST_MYSQL_USERNAME='babelflux_it' \
+mvn -B '-Dtest=MysqlSessionEventOutboxIntegrationTest' test
+```
+
+It verifies a broker failure reason is retained with the retry state and is
+cleared only after a successful outbox recovery. It does not claim a live
+RabbitMQ publish/consume result; that requires `RUN_RABBITMQ_IT=true` and a
+reachable broker.
+
 ## DashScope gateway
 
 `POST /api/models/llm/generate` accepts `model`, `endpoint` (`text` or

@@ -22,7 +22,7 @@ class JdbcSessionEventOutboxTest {
                 + "event_id varchar(64) primary key, event_type varchar(128) not null, schema_version int not null, "
                 + "session_id varchar(64) not null, occurred_at timestamp not null, payload text not null, "
                 + "status varchar(16) not null, attempts int not null, next_attempt_at timestamp not null, "
-                + "created_at timestamp default current_timestamp, published_at timestamp, "
+                + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
         JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
@@ -32,11 +32,15 @@ class JdbcSessionEventOutboxTest {
         outbox.append(event);
         assertEquals(1, outbox.pending(10).size());
         assertTrue(outbox.tryClaim("event-1", "relay-a", Instant.now().plusSeconds(30)));
-        outbox.markFailed("event-1", "relay-a", Instant.now().minusSeconds(1));
+        outbox.markFailed("event-1", "relay-a", Instant.now().minusSeconds(1), "broker unavailable");
         assertEquals(1, outbox.pending(10).getFirst().attempts());
+        assertEquals("broker unavailable", jdbc.queryForObject("select last_error from babelflux_session_event_outbox "
+                + "where event_id='event-1'", String.class));
         assertTrue(outbox.tryClaim("event-1", "relay-a", Instant.now().plusSeconds(30)));
         outbox.markPublished("event-1", "relay-a");
         assertTrue(outbox.pending(10).isEmpty());
+        assertEquals(null, jdbc.queryForObject("select last_error from babelflux_session_event_outbox "
+                + "where event_id='event-1'", String.class));
     }
 
     @Test
@@ -47,7 +51,7 @@ class JdbcSessionEventOutboxTest {
                 + "event_id varchar(64) primary key, event_type varchar(128) not null, schema_version int not null, "
                 + "session_id varchar(64) not null, occurred_at timestamp not null, payload text not null, "
                 + "status varchar(16) not null, attempts int not null, next_attempt_at timestamp not null, "
-                + "created_at timestamp default current_timestamp, published_at timestamp, "
+                + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
         JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
@@ -68,7 +72,7 @@ class JdbcSessionEventOutboxTest {
                 + "event_id varchar(64) primary key, event_type varchar(128) not null, schema_version int not null, "
                 + "session_id varchar(64) not null, occurred_at timestamp not null, payload text not null, "
                 + "status varchar(16) not null, attempts int not null, next_attempt_at timestamp not null, "
-                + "created_at timestamp default current_timestamp, published_at timestamp, "
+                + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
         JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
