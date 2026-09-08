@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.4（2026-09-09）
+版本：v1.5（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -31,6 +31,7 @@
 | U-13 | PCM 队列溢出反馈 | 真实后端 WS 快速注入 200 个 40 ms/1280 bytes PCM 帧 | 页面收到 lagging 状态且显示实际缓冲时长，随后可结束并拿到报告 | PASS：2026-09-09 后端 8005 + 百炼实时链路收到 172 次 `lagging`，`lagMs` 均为 1000（修复前同场景为 0），1.03 s 收到 `session_report` |
 | U-14 | 重复结束会话 | 两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告，用户不感知重复纠偏或重复事件 | PASS：修复后 8006 两端均返回同一 `reportId`；MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-15 | 重复启动主连接 | 两个 WS 客户端复用同一 session token 并发发送 `start_session` | 只有一个实时 runner；第二连接得到可理解错误，主连接字幕/报告不重复 | PASS：修复后 8008 仅一个连接收到 2 组字幕和 1 份报告，另一连接收到“会话已在其他连接中运行” |
+| U-16 | 跨实例重复启动主连接 | 两个后端实例共享 Redis，两个 WS 客户端复用同一 session token 并发发送 `start_session` | 全局只有一个实时 runner；非 owner 实例得到可理解错误，owner 正常输出字幕和报告 | PASS：8013/8014 实测仅 8013 获得 lease 并输出 2 组字幕；8014 返回“会话已在其他实例中运行” |
 
 ## 用户不可见的底层矩阵
 
@@ -49,6 +50,7 @@
 | I-11 | 队列 lag 计量 | PCM 队列容量 25 帧，丢弃最旧帧时按 `audio.size() * FRAME_MS` 计算 `lagMs` | PASS：`RealtimeSessionRunnerTest.reportsMeasuredQueueLagWhenInputOverrunsProvider` 断言 1000 ms；真实 WS 压测 172 次均为 1000 ms，无 0 ms 误报 |
 | I-12 | 报告生成幂等 | `SessionService.finish` 以 sessionId 维护 in-flight future，合并并发结束调用 | PASS：`SessionServiceTest.concurrentFinishCallsGenerateAndPublishOneReport`；真实 MySQL 对照显示重复事件 2/2 -> 1/1 |
 | I-13 | 主 runner 所有权 | `SessionWebSocketHandler` 以 sessionId 原子占用主连接，handoff 保持只读 | PASS：`SessionWebSocketHandlerTest.rejectsSecondPrimarySocketForSameSession`；真实双 WS 仅一次 runner/一次生命周期事件 |
+| I-14 | Redis 分布式 runner lease | `SET NX PX` 原子获取；Lua 按 owner 校验续租/释放；TTL 到期自动回收 | PASS：真实 Redis 6380 获取后 TTL 28759 ms；等待 12 s（含一次 10 s 续租）仍为 26749 ms；停止后 TTL=-2；MySQL outbox `session.finished=1`、`report.generated=1` |
 
 ## 固定测量记录
 
@@ -244,6 +246,24 @@ P50/P95/P99：不适用（单次故障注入，指标验证不作性能分位数
 结论：同一会话的主 runner 和结束控制已收敛到单一 owner，避免重复百炼连接、重复字幕和重复生命周期事件
 ```
 
+### 2026-09-09 Redis lease 跨实例实时 runner 真实回归（Issue #54）
+
+```text
+提交：fix/websocket-redis-lease @ 248bf47
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 两个修复分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307/babelflux、Redis 8.10.1 127.0.0.1:6380、RabbitMQ 4.3.5 AMQP 5673、Elasticsearch 7.17.24 9200
+输入格式：inputMode=demo（两组固定双语字幕，不消耗百炼实时 ASR；报告会后纠偏实际调用 qwen-plus）
+用例：8013 POST /api/sessions -> 同一 wsToken 连接 8013/8014 -> 两端并发 start_session -> 等待 12 s -> 两端并发 stop_session
+用户可见结果：8013 获得主 runner，收到 2 个 transcript_segment、2 个 translation_segment；8014 收到“会话已在其他实例中运行”；报告可查询，reportId=2781541f-adfc-490b-9436-a3f40e528f05-report
+Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=28759 ms；12 s 后 PTTL=26749 ms（10 s 定时续租有效）；owner 停止后 PTTL=-2（释放成功）
+持久化证据：babelflux_sessions.status=ended；outbox 计数 `session.created=1`、`session.finished=1`、`report.generated=1`；报告 segments=2、correctionStatus=completed
+底层实现：Redis Lua `SET NX PX` 防止跨 JVM 双写，续租/释放脚本比较 owner token，Redis 异常时向客户端返回稳定错误并依靠 TTL 回收；新增 repository/handler 测试
+测试：`mvn -B test`，90 tests run，0 failures，4 个外部中间件测试按默认配置跳过；针对测试 15/15 通过
+失败样例与边界：无 Redis 网络分区、进程崩溃恢复或多节点 HA；本次证明的是共享单 Redis 实例的跨 JVM 互斥和续租，不宣称故障域级别高可用
+结论：同一 session 在两个真实后端实例上不会重复建立实时 runner；字幕、报告和生命周期事件均保持单份
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
