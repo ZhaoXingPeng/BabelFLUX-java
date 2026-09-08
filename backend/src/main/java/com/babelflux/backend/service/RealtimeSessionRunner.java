@@ -320,6 +320,12 @@ public class RealtimeSessionRunner {
             state.endMs = Math.max(state.startMs, elapsedMs.get());
             emitSegment("transcript_segment", state, sourceLanguage(), state.source,
                     state.sourceFinal ? "final" : "partial");
+            // Provider lifecycle events are not guaranteed to arrive in source/translation order.
+            // If translation was finalized first, refresh the persisted snapshot when the later
+            // source final arrives so reports never retain an intermediate ASR phrase.
+            if (state.translationFinal && !state.source.isBlank() && !state.translation.isBlank()) {
+                persistSegment(state);
+            }
         }
 
         private void bindResponse(String responseId) {
@@ -344,10 +350,19 @@ public class RealtimeSessionRunner {
             emitSegment("translation_segment", state, session.getTargetLanguage(), state.translation,
                     state.translationFinal ? "final" : "partial");
             if (state.translationFinal && !state.source.isBlank()) {
-                session.upsertSegment(new Session.Segment(state.id, state.source, state.translation,
-                        state.startMs, state.endMs, "final"));
+                persistSegment(state);
                 scheduleRevision();
             }
+        }
+
+        private void persistSegment(SegmentState state) {
+            String status = session.getSegments().stream()
+                    .filter(segment -> state.id.equals(segment.segmentId()))
+                    .map(Session.Segment::status)
+                    .findFirst()
+                    .orElse("final");
+            session.upsertSegment(new Session.Segment(state.id, state.source, state.translation,
+                    state.startMs, state.endMs, status));
         }
 
         private void scheduleRevision() {
