@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.5（2026-09-09）
+版本：v1.6（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -32,6 +32,7 @@
 | U-14 | 重复结束会话 | 两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告，用户不感知重复纠偏或重复事件 | PASS：修复后 8006 两端均返回同一 `reportId`；MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-15 | 重复启动主连接 | 两个 WS 客户端复用同一 session token 并发发送 `start_session` | 只有一个实时 runner；第二连接得到可理解错误，主连接字幕/报告不重复 | PASS：修复后 8008 仅一个连接收到 2 组字幕和 1 份报告，另一连接收到“会话已在其他连接中运行” |
 | U-16 | 跨实例重复启动主连接 | 两个后端实例共享 Redis，两个 WS 客户端复用同一 session token 并发发送 `start_session` | 全局只有一个实时 runner；非 owner 实例得到可理解错误，owner 正常输出字幕和报告 | PASS：8013/8014 实测仅 8013 获得 lease 并输出 2 组字幕；8014 返回“会话已在其他实例中运行” |
+| U-17 | 跨实例重复结束会话 | 两个后端实例共享 MySQL，两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告；报告生成、纠偏调用和生命周期事件均不重复 | PASS：修复后 8013/8014 均返回同一 reportId，MySQL outbox `session.finished=1`、`report.generated=1` |
 
 ## 用户不可见的底层矩阵
 
@@ -51,6 +52,7 @@
 | I-12 | 报告生成幂等 | `SessionService.finish` 以 sessionId 维护 in-flight future，合并并发结束调用 | PASS：`SessionServiceTest.concurrentFinishCallsGenerateAndPublishOneReport`；真实 MySQL 对照显示重复事件 2/2 -> 1/1 |
 | I-13 | 主 runner 所有权 | `SessionWebSocketHandler` 以 sessionId 原子占用主连接，handoff 保持只读 | PASS：`SessionWebSocketHandlerTest.rejectsSecondPrimarySocketForSameSession`；真实双 WS 仅一次 runner/一次生命周期事件 |
 | I-14 | Redis 分布式 runner lease | `SET NX PX` 原子获取；Lua 按 owner 校验续租/释放；TTL 到期自动回收 | PASS：真实 Redis 6380 获取后 TTL 28759 ms；等待 12 s（含一次 10 s 续租）仍为 26749 ms；停止后 TTL=-2；MySQL outbox `session.finished=1`、`report.generated=1` |
+| I-15 | 跨 JVM 报告最终化幂等 | `JdbcSessionRepository.findByIdForUpdate` 在同一事务内锁定 session 行；第二事务读取已持久化 `report_json` 后直接复用 | PASS：H2 两事务并发测试和真实 MySQL 双实例回归均只调用一次生成器、只追加一组生命周期事件 |
 
 ## 固定测量记录
 
@@ -264,6 +266,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：同一 session 在两个真实后端实例上不会重复建立实时 runner；字幕、报告和生命周期事件均保持单份
 ```
 
+### 2026-09-09 跨实例并发结束报告幂等真实回归（Issue #58）
+
+```text
+提交：fix/session-distributed-finish @ d667310
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 两个修复分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307/babelflux、Redis 8.10.1 127.0.0.1:6380、RabbitMQ 4.3.5 AMQP 5673、Elasticsearch 7.17.24 9200
+实验（修复前）：session `132a537b-cc09-4f9e-a3a3-aee791381c93` 尚未启动 runner，两个实例并发 `audio_end`；两端返回同一 reportId，但 outbox 为 `session.created=1`、`session.finished=2`、`report.generated=2`
+修复：`SessionRepository` 增加 `findByIdForUpdate`；JDBC 实现使用 `SELECT ... FOR UPDATE`，`SessionService.finish` 在生成前锁定 session 行。第二事务等待首个事务提交后读取 `report_json`，异常回滚可由后续调用接管。
+实验（修复后）：session `fc3bde68-6d47-4df3-89bd-e4d6bf33f07d` 同样由 8013/8014 并发 `audio_end`；两端均返回 `fc3bde68-6d47-4df3-89bd-e4d6bf33f07d-report`
+持久化证据：outbox 为 `session.created=1`、`session.finished=1`、`report.generated=1`；`babelflux_sessions.status=ended`，报告可通过 REST 查询
+底层证据：H2 两事务并发测试验证第二事务在行锁处等待；`reports.generate` 调用次数为 1。报告生成期间外层事务保持锁，纠偏服务的 `NOT_SUPPORTED` 仅暂停事务连接，不释放锁
+测试：`mvn -B '-Dtest=SessionServiceDistributedFinishTest,SessionServiceTest,JdbcSessionRepositoryTest' test`，3/3 通过；`mvn -B test` 全量 91 通过、0 失败、4 个外部中间件测试按默认配置跳过
+失败样例与边界：行锁会让同 session 的重复结束请求等待报告生成时间；本轮未覆盖数据库故障、死锁重试、跨地域高延迟和长时锁等待，不能宣称多主 HA
+结论：跨 JVM 的重复报告生成与重复生命周期事件已由真实 MySQL 回归修复，用户仍获得一致 reportId，百炼纠偏不会被重复调用
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
