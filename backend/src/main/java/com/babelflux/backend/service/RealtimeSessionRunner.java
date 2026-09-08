@@ -311,7 +311,9 @@ public class RealtimeSessionRunner {
             if (state == null) { begin(event.itemId()); state = current(); }
             state.source = "source_final".equals(event.kind())
                     ? preferFinalSource(state.source, event.text())
-                    : mergeSourcePartial(state.source, event.text());
+                    : isCumulativeSourcePartial(event)
+                            ? value(event.text())
+                            : mergeSourcePartial(state.source, event.text());
             state.sourceFinal = "source_final".equals(event.kind());
             state.endMs = Math.max(state.startMs, elapsedMs.get());
             emitSegment("transcript_segment", state, sourceLanguage(), state.source,
@@ -428,6 +430,9 @@ public class RealtimeSessionRunner {
             if (previous.endsWith(" ") || incoming.matches("^[,.;:!?，。；：！？)].*"))
                 return previous + incoming;
             return previous + " " + incoming;
+        }
+        private static boolean isCumulativeSourcePartial(DashScopeRealtimeClient.NormalizedEvent event) {
+            return event.raw() != null && event.raw().containsKey("stash");
         }
         private String sourceLanguage() { return "auto".equalsIgnoreCase(session.getSourceLanguage()) ? "en" : session.getSourceLanguage(); }
         private Map<String, String> glossary() {

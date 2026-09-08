@@ -54,6 +54,25 @@ class DashScopeSpeechClientTest {
         assertTrue(connection.sentText.stream().anyMatch(value -> value.contains("session.finish")));
     }
 
+    @Test
+    void treatsSessionCreatedAsCompletedTtsHandshake() {
+        String audio = Base64.getEncoder().encodeToString(new byte[]{4, 5});
+        FakeConnection connection = new FakeConnection(
+                "{\"type\":\"session.created\",\"session\":{\"id\":\"created-only\"}}",
+                "{\"type\":\"response.audio.delta\",\"delta\":\"" + audio + "\"}",
+                "{\"type\":\"response.done\"}",
+                "{\"type\":\"session.finished\"}");
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties(), new ObjectMapper(),
+                (url, headers) -> connection);
+
+        var result = client.synthesize("hello", "qwen3-tts-flash-realtime", "Cherry", "Auto", "pcm", 24_000, "commit");
+
+        assertEquals("created-only", result.sessionId());
+        assertArrayEquals(new byte[]{4, 5}, result.audio());
+        assertEquals(java.util.List.of("session.created", "response.audio.delta", "response.done", "session.finished"),
+                result.events());
+    }
+
     private static DashScopeProperties properties() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");

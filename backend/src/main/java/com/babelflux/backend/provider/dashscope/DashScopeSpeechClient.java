@@ -107,13 +107,16 @@ public class DashScopeSpeechClient {
             ws.sendText(json(Map.of("type", "session.update", "session", Map.of("mode", mode,
                     "voice", voice, "language_type", languageType, "response_format", audioFormat,
                     "sample_rate", sampleRate))));
+            // DashScope may acknowledge session.update with session.created only.
+            // Treat either lifecycle acknowledgement as a completed handshake;
+            // waiting specifically for session.updated turns a healthy socket into a timeout.
             while (true) {
                 JsonNode node = receiveJson(ws);
                 String event = text(node, "type");
                 events.add(event);
                 if ("session.created".equals(event) || "session.updated".equals(event)) {
                     sessionId = sessionId == null ? text(node.path("session"), "id") : sessionId;
-                    if ("session.updated".equals(event)) break;
+                    break;
                 } else if ("error".equals(event)) throw realtimeError(node, "DashScope TTS session failed");
             }
             ws.sendText(json(Map.of("type", "input_text_buffer.append", "text", text)));
