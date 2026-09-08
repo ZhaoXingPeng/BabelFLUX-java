@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.0（2026-09-08）
+版本：v1.1（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -19,9 +19,9 @@
 | U-01 | 前端启动 | `npx vite --host 127.0.0.1 --port 5173`，打开根路径 | HTTP 200，Vue 入口可加载 | PASS：2026-09-08，HTTP 200，568 bytes |
 | U-02 | 后端启动 | `MYSQL_ENABLED=true`、MySQL 8.0.43，`mvn -B spring-boot:run` | Tomcat 监听 8000，`GET /api/health` 返回 ok | PASS：真实 MySQL 3307 启动，`{"status":"ok"}` |
 | U-03 | 演示同传 | 创建 `inputMode=demo` 会话，WS 发送 `start_session` 后 `stop_session` | 双语字幕事件顺序正确，结束后可查报告 | PASS：MySQL 实测 `session_started`、2 组 transcript/translation、`session_report`；`ended`/segments/report 均落库 |
-| U-04 | 真实实时同传 | 16 kHz mono PCM 通过 WS 推送，发送 `audio_end` | 收到 transcript/translation，报告可下载，错误可见 | PASS：LiveTranslate 真实链路返回 translation，报告 `completed` |
-| U-05 | TTS 首包与格式 | `/api/models/tts/speech`，模型 `qwen3-tts-flash-realtime` | 返回非空 PCM，采样率/格式与请求一致 | PASS：24 kHz PCM、96,000 bytes，单次 1,044 ms |
-| U-06 | ASR 可读性 | 将真实 TTS PCM 送入 `/api/models/asr/transcriptions` | final 文本可读，partial 最终收敛 | PASS：final 为 `BabelFlux voice smoke test.` |
+| U-04 | 真实实时同传 | 16 kHz mono PCM 通过 WS 推送，发送 `audio_end` | 收到 transcript/translation，报告可下载，错误可见 | PASS：2026-09-09 重启后真实链路 final 源文为 `The bell flux voice smoke test.`，中文翻译和 `session_report` 均返回；修复前曾出现重复词 |
+| U-05 | TTS 首包与格式 | `/api/models/tts/speech`，模型 `qwen3-tts-flash-realtime` | 返回非空 PCM，采样率/格式与请求一致 | PASS：5 次均 HTTP 200，24 kHz PCM，99840–115200 bytes，耗时 908/938/998/1008/1465 ms（P50 998，P95 1465） |
+| U-06 | ASR 可读性 | 将真实 TTS PCM 送入 `/api/models/asr/transcriptions` | final 文本可读，partial 最终收敛 | PASS：`fun-asr-realtime` 连续 5 次 HTTP 200，final 均为 `The bell flux voice smoke test.`；`qwen3-asr-flash-realtime` 独立 ASR 端点真实返回 `ModelNotFound`，已记录为账号/模型边界 |
 | U-07 | 多轮连续对话 | 5 轮短句 + 1 段 2 分钟语音 | 无断线/卡死，轮次顺序和字幕滚动正确 | NOT RUN：需固定语料和重复次数 |
 | U-08 | 暂停/恢复 | 语音流中发送 `pause_session` / `resume_session` | 前端状态一致，恢复后不重复或跳过明显内容 | NOT RUN：需真实设备/浏览器采集 |
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
@@ -39,7 +39,7 @@
 | I-04 | 纠偏复杂度 | 纠偏只扫描固定窗口，按分钟限流；不扫描整场字幕 | PASS：`BoundedRevisionWindowTest`、`RealtimeRevisionServiceTest` |
 | I-05 | Provider 超时 | HTTP/WS 设置连接与读取超时；会后纠偏失败回退实时译文 | PASS：provider 与 `FinalCorrectionServiceTest` |
 | I-06 | 资源清理 | runner 使用 virtual thread、bounded final drain 和 `AutoCloseable` provider | PASS：runner 生命周期测试；长时资源曲线未测 |
-| I-07 | 实时输出音频 | `response.audio.delta` 归属 segment 并下发 `audio_segment` base64 | PASS：客户端归一化测试；真实 TTS 输出已验证，LiveTranslate TTS 音频未单独验收 |
+| I-07 | 实时输出音频 | `response.audio.delta` 归属 segment 并下发 `audio_segment` base64 | PASS：2026-09-09 LiveTranslate `ttsEnabled=true` 真实链路收到 7 个 `audio_segment`，合计 107520 bytes；客户端归一化测试通过 |
 | I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3308、Redis 6380、RabbitMQ 4.3.5/OTP 28 5673、ES 9200 均有真实链路证据；Rabbit 包含断 broker 重试、重启恢复、重复投递幂等与 DLQ |
 | I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：两实例 ES live 竞争与过期 lease 恢复；H2 测试覆盖条件更新/幂等 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
@@ -137,6 +137,27 @@ RabbitMQ 真实验证已补齐；剩余边界是多节点集群、网络分区�
       x-death.reason=rejected；DLQ GET 返回 payload `{not-json`，message_count=0（已 ack 取证）
 结论：真实 outbox->Rabbit exchange->consumer->MySQL receipt 闭环、重复幂等、断 broker 恢复和
       rejected 消息 DLQ 均通过；不等同于多节点 HA、网络分区、TLS/RBAC 和 20 分钟压力测试
+```
+
+### 2026-09-09 百炼 TTS/ASR/LiveTranslate 真实语音回归
+
+```text
+提交：fix/bailian-tts-handshake（工作区修改，尚未提交时采集）；Windows 11 x64，JDK 21.0.12.1
+前端/后端：http://127.0.0.1:5173（HTTP 200，Vite）/ http://127.0.0.1:8003（Tomcat，/api/health=200）
+TTS：POST /api/models/tts/speech，qwen3-tts-flash-realtime、Cherry、pcm、24000 Hz、commit；5/5 HTTP 200。
+     音频 bytes：99840、99840、115200、107520、103680；耗时：1465、908、1008、938、998 ms；P50=998 ms，P95=1465 ms。
+     事件序列包含 session.created、session.updated、response.audio.delta、response.audio.done、response.done、session.finished。
+ASR：将上述 TTS PCM 原样上传 /api/models/asr/transcriptions?model=fun-asr-realtime&audioFormat=pcm&sampleRate=24000；5/5 HTTP 200，
+     耗时 994、903、843、1280、843 ms（P50=903 ms，P95=1280 ms），每次 6 个 segment，事件为 task-started、result-generated*、task-finished，
+     final 均为 “The bell flux voice smoke test.”。同端点指定 qwen3-asr-flash-realtime 返回 ModelNotFound（账号可用模型边界，未静默改写）。
+实时同传：TTS PCM 用 ffmpeg 从 24 kHz 重采样为 16 kHz，按 40 ms/1280 bytes 通过 WS /api/ws/sessions/{id} 推送；
+     ttsEnabled=false 实测 final 源文 “The bell flux voice smoke test.”、中文 “贝尔福克斯语音烟雾测试”，session_report 在约 10.7 s 返回；
+     ttsEnabled=true 实测同样文本，7 个 audio_segment，合计 107520 bytes，session_report 在约 11.6 s 返回。
+底层缺陷与修复：百炼 `conversation.item.input_audio_transcription.text` 的 `stash` 是累计快照，旧逻辑按增量拼接会生成 “The The bell ...”；
+     现按 `raw.stash` 快照替换，普通增量事件仍按原合并逻辑处理；新增 RealtimeSessionRunner 回归测试。TTS 握手同时接受 session.created/session.updated，
+     修复只返回 session.created 时错误超时并产生 HTTP 502 的问题。
+协议边界：一次发送 149760 bytes 的单帧会触发 WebSocket close 1009；浏览器采集实现按约 40 ms 分帧，不触发该限制。
+结论：用户可见的 TTS 播放、ASR final、实时双语字幕和实时 TTS 音频均有真实证据；长时、多设备、网络分区和多节点 HA 仍未覆盖。
 ```
 
 ## 当前结论
