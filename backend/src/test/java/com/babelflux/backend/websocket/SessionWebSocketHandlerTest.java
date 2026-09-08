@@ -1,10 +1,12 @@
 package com.babelflux.backend.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -79,6 +81,30 @@ class SessionWebSocketHandlerTest {
         verify(runner).start(any(Session.class), any());
         verify(run).acceptAudio(pcm);
         assertEquals("running", session.getStatus());
+    }
+
+    @Test
+    void rejectsSecondPrimarySocketForSameSession() throws Exception {
+        String token = tokens.issue("ws-1");
+        WebSocketSession first = socket("ws-1", token);
+        WebSocketSession second = socket("ws-1", token);
+        when(first.getId()).thenReturn("socket-first");
+        when(second.getId()).thenReturn("socket-second");
+        when(runner.start(any(Session.class), any())).thenReturn(run);
+
+        handler.afterConnectionEstablished(first);
+        handler.afterConnectionEstablished(second);
+        handler.handleTextMessage(first, new TextMessage("{\"type\":\"start_session\"}"));
+        handler.handleTextMessage(second, new TextMessage("{\"type\":\"start_session\"}"));
+
+        verify(runner, times(1)).start(any(Session.class), any());
+        assertEquals("error", sent(second).get("type").asText());
+        assertTrue(sent(second).get("message").asText().contains("其他连接"));
+        handler.handleTextMessage(second, new TextMessage("{\"type\":\"stop_session\"}"));
+        assertNull(session.getReport(), "a non-owner socket must not finish the primary session");
+        assertTrue(sent(second).get("message").asText().contains("其他连接"));
+        handler.afterConnectionClosed(first, CloseStatus.NORMAL);
+        handler.afterConnectionClosed(second, CloseStatus.NORMAL);
     }
 
     @Test
