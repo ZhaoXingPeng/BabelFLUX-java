@@ -67,6 +67,13 @@ public class JdbcSessionRepository implements SessionRepository {
     }
 
     @Override
+    public Optional<Session> findByIdForUpdate(String id) {
+        List<Session> sessions = jdbc.query("select " + COLUMNS
+                        + " from babelflux_sessions where session_id=? for update", this::map, id);
+        return sessions.stream().findFirst();
+    }
+
+    @Override
     public List<Session> findAll() {
         return jdbc.query("select " + COLUMNS + " from babelflux_sessions order by created_at_epoch desc", this::map);
     }

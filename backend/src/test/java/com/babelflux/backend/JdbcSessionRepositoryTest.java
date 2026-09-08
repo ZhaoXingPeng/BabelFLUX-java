@@ -36,6 +36,7 @@ class JdbcSessionRepositoryTest {
 
         repository.save(session);
         assertEquals("created", repository.findById(session.getId()).orElseThrow().getStatus());
+        assertEquals("created", repository.findByIdForUpdate(session.getId()).orElseThrow().getStatus());
 
         session.end();
         session.attachReport(reports.generate(session));
