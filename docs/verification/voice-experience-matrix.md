@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.6（2026-09-09）
+版本：v1.7（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -33,6 +33,7 @@
 | U-15 | 重复启动主连接 | 两个 WS 客户端复用同一 session token 并发发送 `start_session` | 只有一个实时 runner；第二连接得到可理解错误，主连接字幕/报告不重复 | PASS：修复后 8008 仅一个连接收到 2 组字幕和 1 份报告，另一连接收到“会话已在其他连接中运行” |
 | U-16 | 跨实例重复启动主连接 | 两个后端实例共享 Redis，两个 WS 客户端复用同一 session token 并发发送 `start_session` | 全局只有一个实时 runner；非 owner 实例得到可理解错误，owner 正常输出字幕和报告 | PASS：8013/8014 实测仅 8013 获得 lease 并输出 2 组字幕；8014 返回“会话已在其他实例中运行” |
 | U-17 | 跨实例重复结束会话 | 两个后端实例共享 MySQL，两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告；报告生成、纠偏调用和生命周期事件均不重复 | PASS：修复后 8013/8014 均返回同一 reportId，MySQL outbox `session.finished=1`、`report.generated=1` |
+| U-18 | 跨实例 handoff 字幕投送 | 主 WS 与 handoff WS 连接不同后端实例，主端启动真实会话 | handoff 端收到与主端相同的字幕、状态和 session_report，不出现“已连接但无字幕” | PASS：8013 主端与 8014 handoff 各收到 6 个启动/字幕事件及同一 `session_report` |
 
 ## 用户不可见的底层矩阵
 
@@ -53,6 +54,7 @@
 | I-13 | 主 runner 所有权 | `SessionWebSocketHandler` 以 sessionId 原子占用主连接，handoff 保持只读 | PASS：`SessionWebSocketHandlerTest.rejectsSecondPrimarySocketForSameSession`；真实双 WS 仅一次 runner/一次生命周期事件 |
 | I-14 | Redis 分布式 runner lease | `SET NX PX` 原子获取；Lua 按 owner 校验续租/释放；TTL 到期自动回收 | PASS：真实 Redis 6380 获取后 TTL 28759 ms；等待 12 s（含一次 10 s 续租）仍为 26749 ms；停止后 TTL=-2；MySQL outbox `session.finished=1`、`report.generated=1` |
 | I-15 | 跨 JVM 报告最终化幂等 | `JdbcSessionRepository.findByIdForUpdate` 在同一事务内锁定 session 行；第二事务读取已持久化 `report_json` 后直接复用 | PASS：H2 两事务并发测试和真实 MySQL 双实例回归均只调用一次生成器、只追加一组生命周期事件 |
+| I-16 | Redis 实时事件 fan-out | `RedisMessageListenerContainer` 订阅 `babelflux:events:session:*`；消息 envelope 携带 publisher，远端只写入本地 bounded history/queue，忽略自身回环 | PASS：真实 8013->Redis 6380->8014 handoff 收到字幕和终态；Pub/Sub 无持久重放、Redis 故障边界已记录 |
 
 ## 固定测量记录
 
@@ -283,6 +285,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：跨 JVM 的重复报告生成与重复生命周期事件已由真实 MySQL 回归修复，用户仍获得一致 reportId，百炼纠偏不会被重复调用
 ```
 
+### 2026-09-09 跨实例 handoff 实时事件 fan-out 真实回归（Issue #60）
+
+```text
+提交：fix/websocket-handoff-events @ c8e79af
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 两个修复分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：Redis 8.10.1 127.0.0.1:6380；MySQL 8.0.43 3307；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+修复前复现：session `4309c108-a896-4f40-b5a2-008ec3b532b0` 主 WS 在 8013、handoff WS 在 8014；8013 收到 2 组字幕，8014 只有 `session_started`
+修复：SessionEventHub 在 Redis 启用时订阅 `babelflux:events:session:*`；主实例本地 fan-out 后发布 envelope，远端解析并写入本地 bounded replay/queue；publisher=nodeId 过滤自身回环；收到 `session_report` 后完成远端 channel 回收
+字幕回归：session `c5aa307c-87fa-4030-9596-54ad34cfb06c` 两端均收到 6 个启动/状态/字幕事件（session_started、ready、2 transcript、2 translation），事件内容一致
+终态回归：session `b9b3c299-9e06-4391-8ed5-345af9413188` 停止后 8013/8014 均收到 `session_report`，reportId=`b9b3c299-9e06-4391-8ed5-345af9413188-report`，correctionStatus=completed
+持久化证据：MySQL outbox 为 `session.created=1`、`session.finished=1`、`report.generated=1`；报告 REST 查询成功
+测试：`mvn -B '-Dtest=SessionEventHubTest,SessionWebSocketHandlerTest' test`，13/13 通过；全量后端测试将在本 PR 更新后执行
+失败样例与边界：Redis Pub/Sub 是实时、非持久总线；handoff 在订阅建立前错过的事件不能从 Redis 重放，Redis 网络故障期间跨实例字幕不可补偿；MySQL outbox 仍是生命周期事实源
+结论：跨实例 handoff 从“已连接但无字幕”恢复为可见双语字幕和终态报告；未把单 Redis Pub/Sub 结果宣称为 Streams/集群 HA
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。

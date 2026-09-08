@@ -64,7 +64,12 @@ public class SessionEventHub {
                 listener = new RedisMessageListenerContainer();
                 listener.setConnectionFactory(factory);
                 listener.addMessageListener(this::receiveRemote, new PatternTopic(REDIS_EVENT_PREFIX + "*"));
-                listener.start();
+                try {
+                    listener.afterPropertiesSet();
+                    listener.start();
+                } catch (Exception error) {
+                    throw new IllegalStateException("Redis Pub/Sub listener failed to start", error);
+                }
             }
         }
         this.redis = redisTemplate;
