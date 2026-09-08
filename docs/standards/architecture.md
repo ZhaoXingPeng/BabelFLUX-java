@@ -21,6 +21,7 @@ Infrastructure / provider adapters (infrastructure, messaging, search, provider)
 - `service` 负责会话时序、媒体输入、纠偏和报告编排；媒体解码、provider 调用和索引写入放在独立适配器。
 - `provider`、`infrastructure`、`messaging`、`search` 只能通过稳定端口向应用层提供能力，不能把第三方 SDK 类型泄漏到 API 或前端。
 - `frontend` 和 `desktop` 共享协议类型语义，但不能直接依赖后端实现细节。
+- Elasticsearch 报告索引是可重建的派生数据；MySQL 中的索引任务使用带租约的状态机（`pending -> processing -> indexed`），租约过期后允许其他实例恢复，不能把 ES 当作事实源。
 
 ## 依赖方向
 

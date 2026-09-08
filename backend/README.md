@@ -135,5 +135,13 @@ Index jobs expose `GET /api/reports/{reportId}/index-status`, and
 Index failures stay in MySQL with retry timestamps and the report endpoint
 continues to read the MySQL snapshot.
 
+The index job relay is safe for multiple application instances. Each pending
+job is claimed with a short MySQL lease before the Elasticsearch write; a
+second instance skips an active lease, while an expired lease is recoverable
+after a crash. Completion and retry updates include the lease owner, so a
+stale worker cannot overwrite a newer enqueue or retry state. This remains an
+at-least-once workflow: Elasticsearch document IDs are stable and indexing is
+idempotent, but delivery latency and retry counts must be measured separately.
+
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.

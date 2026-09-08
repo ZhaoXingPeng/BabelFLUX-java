@@ -58,5 +58,10 @@ create table if not exists babelflux_report_index_jobs (
     attempts integer not null default 0,
     next_attempt_at timestamp not null,
     last_error varchar(1000),
-    updated_at timestamp not null default current_timestamp
+    updated_at timestamp not null default current_timestamp,
+    lease_owner varchar(128),
+    lease_until timestamp null
 );
+
+alter table babelflux_report_index_jobs add column if not exists lease_owner varchar(128);
+alter table babelflux_report_index_jobs add column if not exists lease_until timestamp null;
