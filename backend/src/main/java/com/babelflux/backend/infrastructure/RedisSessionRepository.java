@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,6 +22,7 @@ public class RedisSessionRepository {
     private static final String HANDOFF_PREFIX = "babelflux:token:handoff:";
     private static final String HANDOFF_USED_PREFIX = "babelflux:token:handoff:used:";
     private static final String WEBSOCKET_PREFIX = "babelflux:token:websocket:";
+    private static final String RUNNER_LEASE_PREFIX = "babelflux:lease:runner:";
     private static final DefaultRedisScript<String> CLAIM_SCRIPT = new DefaultRedisScript<>("local used = redis.call('GET', KEYS[2]) "
             + "if used then return '__USED__' end "
             + "local value = redis.call('GET', KEYS[1]) "
@@ -33,6 +35,12 @@ public class RedisSessionRepository {
             + "end "
             + "if redis.call('GET', KEYS[3]) then redis.call('DEL', KEYS[3]); return '__EXPIRED__' end "
             + "return '__NOT_FOUND__'", String.class);
+    private static final DefaultRedisScript<Long> ACQUIRE_RUNNER_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return 1 else return 0 end", Long.class);
+    private static final DefaultRedisScript<Long> RELEASE_RUNNER_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", Long.class);
+    private static final DefaultRedisScript<Long> RENEW_RUNNER_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) else return 0 end", Long.class);
 
     private final StringRedisTemplate redis;
     private final ObjectMapper mapper;
@@ -73,6 +81,35 @@ public class RedisSessionRepository {
         return value == null ? Optional.empty() : Optional.of(read(value, WebSocketTicket.class));
     }
 
+    /** Atomically acquires a primary realtime-runner lease for one session. */
+    public boolean tryAcquireRunnerLease(String sessionId, String owner, Duration ttl) {
+        validateLeaseArguments(sessionId, owner, ttl);
+        Long result = redis.execute(ACQUIRE_RUNNER_SCRIPT, List.of(runnerKey(sessionId)), owner,
+                Long.toString(ttl.toMillis()));
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /** Extends a lease only when the caller still owns it. */
+    public boolean renewRunnerLease(String sessionId, String owner, Duration ttl) {
+        validateLeaseArguments(sessionId, owner, ttl);
+        Long result = redis.execute(RENEW_RUNNER_SCRIPT, List.of(runnerKey(sessionId)), owner,
+                Long.toString(ttl.toMillis()));
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /** Releases a lease only when the owner token matches, preventing stale owners deleting new leases. */
+    public boolean releaseRunnerLease(String sessionId, String owner) {
+        if (sessionId == null || sessionId.isBlank() || owner == null || owner.isBlank()) return false;
+        Long result = redis.execute(RELEASE_RUNNER_SCRIPT, List.of(runnerKey(sessionId)), owner);
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /** Returns whether any live instance currently holds the session runner lease. */
+    public boolean runnerLeaseHeld(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        return Boolean.TRUE.equals(redis.hasKey(runnerKey(sessionId)));
+    }
+
     private static String tokenKey(String token) {
         if (token == null || token.isBlank()) throw new IllegalArgumentException("token is required");
         try {
@@ -81,6 +118,15 @@ public class RedisSessionRepository {
         } catch (NoSuchAlgorithmException error) {
             throw new IllegalStateException("SHA-256 is unavailable", error);
         }
+    }
+
+    private static String runnerKey(String sessionId) { return RUNNER_LEASE_PREFIX + sessionId; }
+
+    private static void validateLeaseArguments(String sessionId, String owner, Duration ttl) {
+        if (sessionId == null || sessionId.isBlank()) throw new IllegalArgumentException("sessionId is required");
+        if (owner == null || owner.isBlank()) throw new IllegalArgumentException("runner owner is required");
+        if (ttl == null || ttl.isZero() || ttl.isNegative())
+            throw new IllegalArgumentException("runner lease TTL must be positive");
     }
 
     private void put(String key, Object value, Duration ttl) {

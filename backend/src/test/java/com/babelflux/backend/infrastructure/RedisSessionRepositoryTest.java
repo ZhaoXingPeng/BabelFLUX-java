@@ -90,5 +90,29 @@ class RedisSessionRepositoryTest {
         assertEquals(Optional.of(ticket), result);
     }
 
+    @Test
+    void usesOwnerCheckedScriptsForRunnerLeaseLifecycle() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString())).thenReturn(1L);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString())).thenReturn(1L);
+        RedisSessionRepository repository = new RedisSessionRepository(redis, mapper());
+
+        assertTrue(repository.tryAcquireRunnerLease("session-1", "socket-1", Duration.ofSeconds(30)));
+        assertTrue(repository.renewRunnerLease("session-1", "socket-1", Duration.ofSeconds(30)));
+        assertTrue(repository.releaseRunnerLease("session-1", "socket-1"));
+        verify(redis, times(2)).execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString());
+        verify(redis, times(1)).execute(any(DefaultRedisScript.class), anyList(), anyString());
+    }
+
+    @Test
+    void checksWhetherAnyRunnerLeaseIsHeld() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        when(redis.hasKey(anyString())).thenReturn(true);
+        RedisSessionRepository repository = new RedisSessionRepository(redis, mapper());
+
+        assertTrue(repository.runnerLeaseHeld("session-1"));
+        verify(redis).hasKey(anyString());
+    }
+
     private static ObjectMapper mapper() { return JsonMapper.builder().addModule(new JavaTimeModule()).build(); }
 }
