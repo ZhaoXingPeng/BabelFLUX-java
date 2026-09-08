@@ -41,7 +41,7 @@
 | I-06 | 资源清理 | runner 使用 virtual thread、bounded final drain 和 `AutoCloseable` provider | PASS：runner 生命周期测试；长时资源曲线未测 |
 | I-07 | 实时输出音频 | `response.audio.delta` 归属 segment 并下发 `audio_segment` base64 | PASS：客户端归一化测试；真实 TTS 输出已验证，LiveTranslate TTS 音频未单独验收 |
 | I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3307、Redis 6380、ES 9200 live；Rabbit live skipped（本机未安装） |
-| I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：ES live 索引/搜索；租约并发/恢复仍由 `JdbcReportIndexJobStoreTest` 覆盖 |
+| I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：两实例 ES live 竞争与过期 lease 恢复；H2 测试覆盖条件更新/幂等 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
 
 ## 固定测量记录
@@ -104,7 +104,17 @@ P50/P95/P99：未测（单次烟测，不形成分位数）
 报告：cb73303a-615f-4e5f-b9bc-43846a7775ec-report
 状态证据：GET /api/reports/{reportId}/index-status -> status=indexed, attempts=0
 搜索证据：GET /api/reports/search?q=Welcome -> total=1，返回同 reportId/sessionId 与 2 句摘要
-边界：本项验证索引任务和搜索闭环；多实例竞争、lease 过期恢复仍由独立 H2/JDBC 测试覆盖，未伪造多节点 ES 压测
+边界：本项验证索引任务和搜索闭环；本地单节点 ES 不等同于多节点集群压测
+```
+
+### 2026-09-08 双实例索引 lease 与过期恢复
+
+```text
+实例：Java backend :8000 + :8001，共享 MySQL 8.0.43 :3307、Redis :6380、ES 7.17.24 :9200
+正常竞争：报告 f4139806-f111-40c5-97ae-f099572e6e19-report 由 session_report 生成；ES _stats/indexing index_total 1 -> 2，DELTA=1；MySQL index status=indexed、attempts=0
+过期恢复：手工将同一 job 置为 processing、lease_owner=crashed-instance、lease_until=过去时间；两实例调度后 ES index_total 2 -> 3，DELTA=1，状态重新 indexed、owner 清空
+搜索结果：GET /api/reports/search?q=Java 返回该报告；没有重复 ES 文档（固定 reportId）
+边界：这是共享单节点 ES 的真实并发/恢复烟测，不替代多节点故障压测和长时 P95/P99 观测
 ```
 
 ## 当前结论
