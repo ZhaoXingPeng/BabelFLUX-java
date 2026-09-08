@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
@@ -83,6 +84,42 @@ class SessionWebSocketHandlerTest {
         verify(runner).start(any(Session.class), any());
         verify(run).acceptAudio(pcm);
         assertEquals("running", session.getStatus());
+    }
+
+    @Test
+    void persistsStartupSnapshotBeforeCreatingRunner() throws Exception {
+        SessionService persisted = spy(sessions);
+        handler = new SessionWebSocketHandler(mapper, persisted, tokens, runner);
+        String token = tokens.issue("ws-1");
+        WebSocketSession socket = socket("ws-1", token);
+        when(runner.start(any(Session.class), any())).thenReturn(run);
+
+        handler.afterConnectionEstablished(socket);
+        handler.handleTextMessage(socket, new TextMessage(
+                "{\"type\":\"start_session\",\"sourceLanguage\":\"ja\","
+                        + "\"targetLanguage\":\"en\",\"domain\":\"running-state\"}"));
+
+        verify(persisted).saveProgress(session);
+        assertEquals("running", persisted.get("ws-1").getStatus());
+        assertEquals("ja", persisted.get("ws-1").getSourceLanguage());
+        assertEquals("en", persisted.get("ws-1").getTargetLanguage());
+        assertEquals("running-state", persisted.get("ws-1").getDomain());
+    }
+
+    @Test
+    void rollsBackPersistedStartupWhenRunnerCannotStart() throws Exception {
+        SessionService persisted = spy(sessions);
+        handler = new SessionWebSocketHandler(mapper, persisted, tokens, runner);
+        String token = tokens.issue("ws-1");
+        WebSocketSession socket = socket("ws-1", token);
+        when(runner.start(any(Session.class), any())).thenThrow(new IllegalStateException("provider unavailable"));
+
+        handler.afterConnectionEstablished(socket);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> handler.handleTextMessage(socket, new TextMessage("{\"type\":\"start_session\"}")));
+
+        assertEquals("ended", persisted.get("ws-1").getStatus());
+        verify(persisted, times(2)).saveProgress(session);
     }
 
     @Test

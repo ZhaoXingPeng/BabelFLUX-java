@@ -54,4 +54,33 @@ class JdbcSessionRepositoryTest {
         assertTrue(repository.deleteById(session.getId()));
         assertTrue(repository.findById(session.getId()).isEmpty());
     }
+
+    @Test
+    void persistsRunningStartupOverridesBeforeRealtimeWorkBegins() {
+        JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:jdbc-startup;DB_CLOSE_DELAY=-1", "sa", ""));
+        jdbc.execute("create table babelflux_sessions ("
+                + "session_id varchar(64) primary key, created_at_epoch bigint not null, ended_at_epoch bigint, "
+                + "status varchar(32) not null, session_name varchar(255) not null, source_language varchar(32) not null, "
+                + "target_language varchar(32) not null, domain varchar(128) not null, model_profile varchar(128) not null, "
+                + "product_mode varchar(32) not null, input_mode varchar(64) not null, source_label varchar(512) not null, "
+                + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
+                + "glossary_json text not null, segments_json text not null, report_json text)");
+        JdbcSessionRepository repository = new JdbcSessionRepository(jdbc,
+                JsonMapper.builder().addModule(new JavaTimeModule()).build());
+        Session session = Session.create("startup-snapshot", "startup", "en", "zh", "通用", "智能默认",
+                "quick", "demo", "demo", null, "idle", false, java.util.List.of());
+        repository.save(session);
+
+        session.applyOverrides("ja", "en", "running-state", "demo", null, "balanced");
+        session.start();
+        repository.save(session);
+
+        Session restored = repository.findById("startup-snapshot").orElseThrow();
+        assertEquals("running", restored.getStatus());
+        assertEquals("ja", restored.getSourceLanguage());
+        assertEquals("en", restored.getTargetLanguage());
+        assertEquals("running-state", restored.getDomain());
+        assertEquals("balanced", restored.getModelProfile());
+    }
 }

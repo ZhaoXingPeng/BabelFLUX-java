@@ -152,6 +152,8 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                 AtomicBoolean reportEmitted = new AtomicBoolean();
                 AtomicReference<RealtimeSessionRunner.RunHandle> handleRef = new AtomicReference<>();
                 try {
+                    // Persist the startup snapshot before another instance can read stale history.
+                    sessions.saveProgress(session);
                     RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> {
                         if ("session_report".equals(event.get("type"))) {
                             reportEmitted.set(true);
@@ -172,6 +174,12 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                         scheduleLeaseRenewal(id, socket);
                     }
                 } catch (RuntimeException | Error error) {
+                    session.end();
+                    try {
+                        sessions.saveProgress(session);
+                    } catch (RuntimeException | Error ignored) {
+                        error.addSuppressed(ignored);
+                    }
                     releaseRunnerOwner(id, socket.getId());
                     throw error;
                 }
