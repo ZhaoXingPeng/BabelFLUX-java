@@ -41,7 +41,10 @@ public class SessionReportService {
                 .mapToLong(segment -> Math.max(segment.startMs(), segment.endMs())).max().orElse(0L);
         long elapsedDuration = session.getEndedAt() == null ? 0L
                 : Math.max(0L, session.getEndedAt().toEpochMilli() - session.getCreatedAt().toEpochMilli());
-        long durationMs = Math.max(segmentDuration, elapsedDuration);
+        // Segment timestamps follow the media timeline; wall-clock time also includes
+        // provider shutdown and post-session correction, so only use it for empty sessions.
+        long durationMs = sourceSegments.isEmpty() || segmentDuration <= 0
+                ? elapsedDuration : segmentDuration;
         String durationText = formatDuration(durationMs);
         int segmentCount = reportSegments.size();
         String fallbackSummary = segmentCount == 0
