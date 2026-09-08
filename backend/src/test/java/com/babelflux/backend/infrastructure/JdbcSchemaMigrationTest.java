@@ -1,12 +1,22 @@
 package com.babelflux.backend.infrastructure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class JdbcSchemaMigrationTest {
+    @Test
+    void schemaScriptDoesNotUseUnsupportedAddColumnIfNotExists() throws IOException {
+        String schema = new ClassPathResource("schema.sql").getContentAsString(StandardCharsets.UTF_8);
+        assertFalse(schema.toLowerCase().contains("add column if not exists"));
+    }
+
     @Test
     void addsMissingLeaseColumnsAndIsIdempotent() {
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
