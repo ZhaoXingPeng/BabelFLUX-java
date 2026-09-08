@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -183,6 +185,58 @@ class RealtimeSessionRunnerTest {
         assertEquals("lagging", laggingState.get("status"));
         handle.stop();
         handle.await(Duration.ofSeconds(3));
+        runner.shutdown();
+    }
+
+    @Test
+    void reportsMeasuredQueueLagWhenInputOverrunsProvider() throws Exception {
+        InMemorySessionRepository repository = new InMemorySessionRepository();
+        DashScopeProperties properties = new DashScopeProperties();
+        properties.setApiKey("test-key");
+        properties.setBaseUrl("https://dashscope.aliyuncs.com/api/v1");
+        SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
+                mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
+        Session session = Session.create("lag-run", "lag", "en", "zh", "通用", "默认",
+                "quick", "live", "microphone", null, "idle", false, List.of());
+        repository.save(session);
+
+        DashScopeRealtimeClient realtime = mock(DashScopeRealtimeClient.class);
+        DashScopeRealtimeClient.LiveSession provider = mock(DashScopeRealtimeClient.LiveSession.class);
+        when(realtime.connect(any())).thenReturn(provider);
+        AtomicBoolean finished = new AtomicBoolean();
+        CountDownLatch sendStarted = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            sendStarted.countDown();
+            releaseSend.await(2, TimeUnit.SECONDS);
+            return null;
+        }).when(provider).sendAudio(any());
+        when(provider.receive(any(Duration.class))).thenAnswer(invocation -> finished.get()
+                ? new DashScopeRealtimeClient.NormalizedEvent("session_finished", "", new byte[0], null, null, Map.of())
+                : null);
+        org.mockito.Mockito.doAnswer(invocation -> { finished.set(true); return null; }).when(provider).finish();
+
+        RealtimeSessionRunner runner = new RealtimeSessionRunner(realtime, properties, service);
+        List<Map<String, Object>> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+        RealtimeSessionRunner.RunHandle handle = runner.start(session, events::add);
+        handle.acceptAudio(new byte[1_280]);
+        assertTrue(sendStarted.await(1, TimeUnit.SECONDS));
+        for (int i = 0; i < 40; i++) handle.acceptAudio(new byte[1_280]);
+        releaseSend.countDown();
+        handle.stop();
+        handle.await(Duration.ofSeconds(3));
+
+        List<Map<String, Object>> lagEvents = events.stream()
+                .filter(event -> "source_sync_state".equals(event.get("type")))
+                .filter(event -> {
+                    @SuppressWarnings("unchecked") Map<String, Object> state = (Map<String, Object>) event.get("state");
+                    return state != null && "lagging".equals(state.get("status"));
+                }).toList();
+        assertTrue(lagEvents.stream().anyMatch(event -> {
+            @SuppressWarnings("unchecked") Map<String, Object> state = (Map<String, Object>) event.get("state");
+            return Long.valueOf(1_000L).equals(state.get("lagMs"));
+        }));
+        assertTrue(events.stream().anyMatch(event -> "session_report".equals(event.get("type"))));
         runner.shutdown();
     }
 

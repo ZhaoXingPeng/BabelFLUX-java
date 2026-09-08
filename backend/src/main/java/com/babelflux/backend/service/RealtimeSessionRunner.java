@@ -106,7 +106,7 @@ public class RealtimeSessionRunner {
                 audio.poll();
                 audio.offer(frame);
                 emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
-                        "status", "lagging", "lagMs", 0,
+                        "status", "lagging", "lagMs", queuedLagMs(),
                         "message", "音频输入超过 1 秒缓冲，已丢弃最旧帧")));
             }
         }
@@ -253,7 +253,7 @@ public class RealtimeSessionRunner {
                 audio.poll();
                 audio.offer(frame);
                 emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
-                        "status", "lagging", "lagMs", 0,
+                        "status", "lagging", "lagMs", queuedLagMs(),
                         "message", "媒体输入超过 1 秒缓冲，已丢弃最旧帧")));
             }
         }
@@ -261,6 +261,8 @@ public class RealtimeSessionRunner {
         private void offerAudioEnd() {
             while (!audio.offer(new AudioFrame(new byte[0], true))) audio.poll();
         }
+
+        private long queuedLagMs() { return audio.size() * (long) MediaPcmSource.FRAME_MS; }
 
         private boolean drainProvider(DashScopeRealtimeClient.LiveSession provider) {
             DashScopeRealtimeClient.NormalizedEvent event = provider.receive(PROVIDER_POLL);
