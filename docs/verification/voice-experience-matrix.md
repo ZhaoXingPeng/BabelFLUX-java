@@ -40,8 +40,8 @@
 | I-05 | Provider 超时 | HTTP/WS 设置连接与读取超时；会后纠偏失败回退实时译文 | PASS：provider 与 `FinalCorrectionServiceTest` |
 | I-06 | 资源清理 | runner 使用 virtual thread、bounded final drain 和 `AutoCloseable` provider | PASS：runner 生命周期测试；长时资源曲线未测 |
 | I-07 | 实时输出音频 | `response.audio.delta` 归属 segment 并下发 `audio_segment` base64 | PASS：客户端归一化测试；真实 TTS 输出已验证，LiveTranslate TTS 音频未单独验收 |
-| I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3307 与 Redis 6380 live；Rabbit/ES live skipped（本机未安装） |
-| I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：`JdbcReportIndexJobStoreTest` 两项租约/幂等测试 |
+| I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3307、Redis 6380、ES 9200 live；Rabbit live skipped（本机未安装） |
+| I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：ES live 索引/搜索；租约并发/恢复仍由 `JdbcReportIndexJobStoreTest` 覆盖 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
 
 ## 固定测量记录
@@ -92,9 +92,21 @@ P50/P95/P99：未测（单次烟测，不形成分位数）
 基础检查：redis-cli ping=PONG；SET babelflux:test live EX 30；TTL=30；GET=live
 应用链路：创建 session 后 Redis 出现 websocket/handoff TTL key；首次 handoff claim 返回 wsToken
 并发/重放边界：同一 handoff token 第二次 claim 返回 HTTP 409，Redis Lua 原子消费生效
-未覆盖：RabbitMQ outbox 和 Elasticsearch 派生索引仍未安装，保持 skipped
+未覆盖：RabbitMQ outbox 仍未安装，保持 skipped
+```
+
+### 2026-09-08 Elasticsearch 报告索引与搜索
+
+```text
+环境：Elasticsearch 7.17.24 single-node，127.0.0.1:9200，cluster health=green
+后端配置：MYSQL_ENABLED=true、REDIS_ENABLED=true、ELASTICSEARCH_ENABLED=true
+应用链路：创建 demo session -> WS start_session/stop_session -> session_report -> MySQL index job
+报告：cb73303a-615f-4e5f-b9bc-43846a7775ec-report
+状态证据：GET /api/reports/{reportId}/index-status -> status=indexed, attempts=0
+搜索证据：GET /api/reports/search?q=Welcome -> total=1，返回同 reportId/sessionId 与 2 句摘要
+边界：本项验证索引任务和搜索闭环；多实例竞争、lease 过期恢复仍由独立 H2/JDBC 测试覆盖，未伪造多节点 ES 压测
 ```
 
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、真实 RabbitMQ/Elasticsearch、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/Elasticsearch 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、真实 RabbitMQ、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
