@@ -249,8 +249,9 @@ Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控�
 ## 开发规范
 
 - 主分支 `main` 始终保持可运行 / 可审阅；新功能走独立分支 + PR，单个 PR 只做一件事。
-- PR 描述包含：功能描述、实现思路、测试方式。
-- 分支命名 `feat/* | fix/* | docs/* | chore/*`；提交信息 `feat: … / fix: … / docs: … / chore: …`。
+- 分支命名、commit、Issue 和 PR 的完整格式、语言和安全要求统一以 [`CONTRIBUTING.md`](CONTRIBUTING.md) 为准，不在此维护第二套规则。
+- PR 必须关联 Issue，并按模板记录用户可观察变化、实现边界、实验结果、实际验证命令、风险与回滚方式；每次有意义的实测及时用“实验 / 结果 / 结论”回贴，失败实验也保留。
+- 标题默认使用 `gitemoji type(scope): 中文摘要`（如 `🐛 fix(websocket): 限制跨实例实时 runner`），描述和评论默认使用中文；命令、代码标识和协议名可保留英文但需有中文说明。
 
 ---
 
