@@ -13,6 +13,10 @@ import java.util.Comparator;
 import java.util.Set;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +30,8 @@ public class SessionService {
     private final JdbcSessionEventOutbox outbox;
     private final SessionEventFactory eventFactory;
     private final ReportIndexingPort reportIndexing;
+    /** Deduplicates concurrent finish calls from stop/disconnect races in this JVM. */
+    private final ConcurrentMap<String, CompletableFuture<SessionReport>> finishing = new ConcurrentHashMap<>();
 
     public SessionService(SessionRepository repository, SessionReportService reports,
                           BabelFluxProperties properties, JdbcSessionEventOutbox outbox,
@@ -71,14 +77,43 @@ public class SessionService {
     public SessionReport finish(String id) {
         Session session = get(id);
         if (session.getReport() != null) return session.getReport();
-        session.end();
-        SessionReport report = reports.generate(session);
-        session.attachReport(report);
-        repository.save(session);
-        reportIndexing.enqueue(report);
-        appendEventIfEnabled(eventFactory.finished(session, report));
-        appendEventIfEnabled(eventFactory.reportGenerated(session, report));
-        return report;
+        CompletableFuture<SessionReport> created = new CompletableFuture<>();
+        CompletableFuture<SessionReport> existing = finishing.putIfAbsent(id, created);
+        if (existing != null) return awaitFinish(existing);
+        try {
+            // Re-read after winning the slot: another path may have persisted the report
+            // between the initial lookup and putIfAbsent.
+            session = get(id);
+            if (session.getReport() != null) {
+                created.complete(session.getReport());
+                return session.getReport();
+            }
+            session.end();
+            SessionReport report = reports.generate(session);
+            session.attachReport(report);
+            repository.save(session);
+            reportIndexing.enqueue(report);
+            appendEventIfEnabled(eventFactory.finished(session, report));
+            appendEventIfEnabled(eventFactory.reportGenerated(session, report));
+            created.complete(report);
+            return report;
+        } catch (RuntimeException | Error error) {
+            created.completeExceptionally(error);
+            throw error;
+        } finally {
+            finishing.remove(id, created);
+        }
+    }
+
+    private SessionReport awaitFinish(CompletableFuture<SessionReport> future) {
+        try {
+            return future.join();
+        } catch (CompletionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof RuntimeException runtime) throw runtime;
+            if (cause instanceof Error fatal) throw fatal;
+            throw error;
+        }
     }
 
     public SessionReport report(String id) {
