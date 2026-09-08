@@ -148,7 +148,7 @@ TTS：POST /api/models/tts/speech，qwen3-tts-flash-realtime、Cherry、pcm、24
      音频 bytes：99840、99840、115200、107520、103680；耗时：1465、908、1008、938、998 ms；P50=998 ms，P95=1465 ms。
      事件序列包含 session.created、session.updated、response.audio.delta、response.audio.done、response.done、session.finished。
 ASR：将上述 TTS PCM 原样上传 /api/models/asr/transcriptions?model=fun-asr-realtime&audioFormat=pcm&sampleRate=24000；5/5 HTTP 200，
-     耗时 843、903、843、1280、843 ms（P50=843 ms，P95=1280 ms），每次 6 个 segment，事件为 task-started、result-generated*、task-finished，
+     耗时 994、903、843、1280、843 ms（P50=903 ms，P95=1280 ms），每次 6 个 segment，事件为 task-started、result-generated*、task-finished，
      final 均为 “The bell flux voice smoke test.”。同端点指定 qwen3-asr-flash-realtime 返回 ModelNotFound（账号可用模型边界，未静默改写）。
 实时同传：TTS PCM 用 ffmpeg 从 24 kHz 重采样为 16 kHz，按 40 ms/1280 bytes 通过 WS /api/ws/sessions/{id} 推送；
      ttsEnabled=false 实测 final 源文 “The bell flux voice smoke test.”、中文 “贝尔福克斯语音烟雾测试”，session_report 在约 10.7 s 返回；
