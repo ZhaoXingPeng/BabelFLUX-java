@@ -155,6 +155,42 @@ class FinalCorrectionServiceTest {
         service.shutdown();
     }
 
+    @Test
+    void keepsCompletedBatchesWhenAnEarlierBatchTimesOut() {
+        DashScopeClient client = mock(DashScopeClient.class);
+        DashScopeProperties properties = configured();
+        properties.setFinalCorrectionBatchSize(1);
+        properties.setFinalCorrectionTimeout(Duration.ofMillis(300));
+        when(client.generate(any(), any(), any(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = invocation.getArgument(2);
+            String prompt = String.valueOf(messages.get(1).get("content"));
+            if (prompt.contains("[s1]")) Thread.sleep(500);
+            String id = prompt.contains("[s1]") ? "s1" : prompt.contains("[s2]") ? "s2" : "s3";
+            return new DashScopeClient.LlmGenerateResponse(
+                    "req-" + id, "qwen-plus",
+                    "{\"segments\":[{\"id\":\"" + id + "\",\"finalTranslation\":\"最终" + id + "\"}]}",
+                    List.of(), "stop", Map.of());
+        });
+        FinalCorrectionService service = new FinalCorrectionService(client, properties, new ObjectMapper());
+        Session session = Session.create("timeout-order", "timeout-order", "en", "zh", "技术", "默认",
+                "quick", "demo", "demo", null, "idle", false, List.of());
+        for (int index = 1; index <= 3; index++) {
+            session.addSegment(new Session.Segment("s" + index, "source " + index,
+                    "实时 " + index, index * 1000L, index * 1000L + 500L, "final"));
+        }
+
+        FinalCorrectionService.CorrectionResult result = service.correct(session, session.getSegments());
+
+        assertEquals("partial", result.status());
+        assertEquals(2, result.finalById().size());
+        assertEquals("最终s2", result.finalById().get("s2"));
+        assertEquals("最终s3", result.finalById().get("s3"));
+        assertTrue(result.error().contains("超时"));
+        verify(client, times(3)).generate(any(), any(), any(), any());
+        service.shutdown();
+    }
+
     private static DashScopeProperties configured() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");
