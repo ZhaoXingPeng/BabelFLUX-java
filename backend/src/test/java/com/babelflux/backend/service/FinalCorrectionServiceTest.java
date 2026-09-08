@@ -135,6 +135,26 @@ class FinalCorrectionServiceTest {
         service.shutdown();
     }
 
+    @Test
+    void acceptsSourceBackedEnglishTokenCorrectionWithoutAllowingDeletion() {
+        DashScopeClient client = mock(DashScopeClient.class);
+        when(client.generate(any(), any(), any(), any())).thenReturn(new DashScopeClient.LlmGenerateResponse(
+                "req-token", "qwen-plus", "{\"segments\":[{\"id\":\"s1\","
+                        + "\"finalTranslation\":\"BabelFlux语音最终版回归测试\"}]}",
+                List.of(), "stop", Map.of()));
+        FinalCorrectionService service = new FinalCorrectionService(client, configured(), new ObjectMapper());
+        Session session = Session.create("token-correction", "token", "en", "zh", "技术", "默认",
+                "quick", "demo", "demo", null, "idle", false, List.of());
+        session.addSegment(new Session.Segment("s1", "The Babel flux voice finalization regression test.",
+                "Babble Flux语音最终版回归测试", 0, 1000, "final"));
+
+        FinalCorrectionService.CorrectionResult result = service.correct(session, session.getSegments());
+
+        assertEquals("completed", result.status());
+        assertEquals("BabelFlux语音最终版回归测试", result.finalById().get("s1"));
+        service.shutdown();
+    }
+
     private static DashScopeProperties configured() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");

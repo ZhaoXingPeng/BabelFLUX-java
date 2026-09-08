@@ -235,7 +235,7 @@ public class FinalCorrectionService {
                     Session.Segment source = byId.get(id);
                     if (source != null && translation != null && !translation.isBlank()) {
                         String candidate = translation.trim();
-                        if (passesCompletenessGuard(source.translationText(), candidate)) finals.put(id, candidate);
+                        if (passesCompletenessGuard(source.sourceText(), source.translationText(), candidate)) finals.put(id, candidate);
                         else rejectedForCompleteness++;
                     }
                 }
@@ -310,14 +310,16 @@ public class FinalCorrectionService {
         }
         return List.copyOf(batches);
     }
-    private static boolean passesCompletenessGuard(String live, String candidate) {
+    private static boolean passesCompletenessGuard(String source, String live, String candidate) {
         String normalizedLive = compact(live);
         String normalizedCandidate = compact(candidate);
         if (normalizedLive.length() < COMPLETENESS_GUARD_MIN_LENGTH) return true;
         if (normalizedCandidate.length() < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_RATIO)) return false;
         if (longestCommonSubsequence(normalizedLive, normalizedCandidate)
                 < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_OVERLAP)) return false;
-        return preservesLongTokens(normalizedLive, normalizedCandidate);
+        // Token checks use the original spacing; compacting first would merge
+        // adjacent words such as "Babel Flux" into one unrelated token.
+        return preservesLongTokens(source, live, candidate);
     }
     private static String compact(String value) { return value == null ? "" : value.replaceAll("\\s+", ""); }
     private static int longestCommonSubsequence(String left, String right) {
@@ -333,10 +335,42 @@ public class FinalCorrectionService {
         }
         return previous[right.length()];
     }
-    private static boolean preservesLongTokens(String live, String candidate) {
+    private static boolean preservesLongTokens(String source, String live, String candidate) {
+        java.util.Set<String> sourceTokens = new java.util.HashSet<>();
+        java.util.regex.Matcher sourceMatcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}")
+                .matcher(source == null ? "" : source);
+        while (sourceMatcher.find()) sourceTokens.add(sourceMatcher.group().toLowerCase(java.util.Locale.ROOT));
+        java.util.Set<String> candidateTokens = new java.util.HashSet<>();
+        java.util.regex.Matcher candidateMatcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}")
+                .matcher(candidate);
+        while (candidateMatcher.find()) candidateTokens.add(candidateMatcher.group().toLowerCase(java.util.Locale.ROOT));
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}").matcher(live);
-        while (matcher.find() && !candidate.contains(matcher.group())) return false;
+        String normalizedCandidate = candidate.toLowerCase(java.util.Locale.ROOT);
+        while (matcher.find()) {
+            String token = matcher.group();
+            if (candidate.contains(token)) continue;
+            boolean sourceBackedCorrection = sourceTokens.stream()
+                    .filter(sourceToken -> candidateTokens.contains(sourceToken)
+                            || sourceToken.length() >= 4 && normalizedCandidate.contains(sourceToken))
+                    .anyMatch(sourceToken -> editDistanceAtMost(token.toLowerCase(java.util.Locale.ROOT), sourceToken, 2));
+            if (!sourceBackedCorrection) return false;
+        }
         return true;
+    }
+    private static boolean editDistanceAtMost(String left, String right, int limit) {
+        if (Math.abs(left.length() - right.length()) > limit) return false;
+        int[] previous = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            int[] current = new int[right.length() + 1];
+            current[0] = i;
+            for (int j = 1; j <= right.length(); j++) {
+                current[j] = left.charAt(i - 1) == right.charAt(j - 1) ? previous[j - 1]
+                        : 1 + Math.min(previous[j - 1], Math.min(previous[j], current[j - 1]));
+            }
+            previous = current;
+        }
+        return previous[right.length()] <= limit;
     }
     private static String appendQualityNotes(String qualityNotes, String safety) {
         if (safety == null || safety.isBlank()) return value(qualityNotes);
