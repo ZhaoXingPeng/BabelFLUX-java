@@ -75,6 +75,20 @@ public class SessionService {
 
     @Transactional
     public SessionReport finish(String id) {
+        return finishInternal(id, null);
+    }
+
+    /**
+     * Finalize from the caller's latest aggregate snapshot while retaining the
+     * database row lock and cross-instance idempotency of finish(String).
+     */
+    @Transactional
+    public SessionReport finish(Session latest) {
+        if (latest == null) throw new SessionNotFoundException(null);
+        return finishInternal(latest.getId(), latest);
+    }
+
+    private SessionReport finishInternal(String id, Session latest) {
         Session session = get(id);
         if (session.getReport() != null) return session.getReport();
         CompletableFuture<SessionReport> created = new CompletableFuture<>();
@@ -88,13 +102,17 @@ public class SessionService {
                 created.complete(session.getReport());
                 return session.getReport();
             }
-            session.end();
-            SessionReport report = reports.generate(session);
-            session.attachReport(report);
-            repository.save(session);
+            Session target = latest == null ? session : latest;
+            target.end();
+            SessionReport report = target.getReport();
+            if (report == null) {
+                report = reports.generate(target);
+                target.attachReport(report);
+            }
+            repository.save(target);
             reportIndexing.enqueue(report);
-            appendEventIfEnabled(eventFactory.finished(session, report));
-            appendEventIfEnabled(eventFactory.reportGenerated(session, report));
+            appendEventIfEnabled(eventFactory.finished(target, report));
+            appendEventIfEnabled(eventFactory.reportGenerated(target, report));
             created.complete(report);
             return report;
         } catch (RuntimeException | Error error) {

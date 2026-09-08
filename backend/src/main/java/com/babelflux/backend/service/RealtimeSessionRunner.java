@@ -445,15 +445,28 @@ public class RealtimeSessionRunner {
 
         private void finalizeSession() {
             if (!ended.compareAndSet(false, true)) return;
-            try {
-                awaitRevisions();
-                sessions.saveProgress(session);
-                SessionReport report = sessions.finish(session.getId());
-                emit(Map.of("type", "session_report", "reportId", report.reportId(),
-                        "correctionStatus", report.correctionStatus()));
-            } catch (Exception error) {
-                emitQuietly(Map.of("type", "error", "message", "报告生成失败：" + error.getMessage()));
+            awaitRevisions();
+            Exception failure = null;
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    SessionReport report = sessions.finish(session);
+                    emit(Map.of("type", "session_report", "reportId", report.reportId(),
+                            "correctionStatus", report.correctionStatus()));
+                    return;
+                } catch (Exception error) {
+                    failure = error;
+                    if (attempt < 2) {
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
             }
+            emitQuietly(Map.of("type", "error", "message", "报告生成失败："
+                    + (failure == null ? "未知错误" : failure.getMessage())));
         }
 
         private void awaitRevisions() {

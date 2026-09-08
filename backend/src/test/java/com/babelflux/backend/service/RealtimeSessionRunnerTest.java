@@ -7,12 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.babelflux.backend.config.DashScopeProperties;
 import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.domain.Session;
+import com.babelflux.backend.infrastructure.JdbcSessionRepository;
 import com.babelflux.backend.infrastructure.InMemorySessionRepository;
 import com.babelflux.backend.provider.dashscope.DashScopeRealtimeClient;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.search.ReportIndexingPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +30,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class RealtimeSessionRunnerTest {
     @Test
@@ -52,6 +57,44 @@ class RealtimeSessionRunnerTest {
         assertTrue(events.stream().anyMatch(event -> "transcript_segment".equals(event.get("type"))));
         assertTrue(events.stream().anyMatch(event -> "translation_segment".equals(event.get("type"))));
         assertEquals("demo-run-report", service.get("demo-run").getReport().reportId());
+        runner.shutdown();
+    }
+
+    @Test
+    void retriesFinalizationAfterTransientJdbcFailureAndKeepsLatestSegments() throws Exception {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:runner-finalize-retry;DB_CLOSE_DELAY=-1", "sa", "");
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        jdbc.execute("create table babelflux_sessions ("
+                + "session_id varchar(64) primary key, created_at_epoch bigint not null, ended_at_epoch bigint, "
+                + "status varchar(32) not null, session_name varchar(255) not null, source_language varchar(32) not null, "
+                + "target_language varchar(32) not null, domain varchar(128) not null, model_profile varchar(128) not null, "
+                + "product_mode varchar(32) not null, input_mode varchar(64) not null, source_label varchar(512) not null, "
+                + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
+                + "glossary_json text not null, segments_json text not null, report_json text)");
+        FlakyJdbcSessionRepository repository = new FlakyJdbcSessionRepository(jdbc,
+                JsonMapper.builder().addModule(new JavaTimeModule()).build());
+        Session session = Session.create("finalize-retry", "retry", "en", "zh", "通用", "默认",
+                "quick", "demo", "demo", null, "idle", false, List.of());
+        repository.save(session);
+        repository.failNextFinalSave();
+        SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
+                mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
+        RealtimeSessionRunner runner = new RealtimeSessionRunner(
+                new DashScopeRealtimeClient(new DashScopeProperties(), new ObjectMapper()),
+                new DashScopeProperties(), service);
+        List<Map<String, Object>> events = new ArrayList<>();
+
+        RealtimeSessionRunner.RunHandle handle = runner.start(session, events::add);
+        Thread.sleep(100);
+        handle.stop();
+        handle.await(Duration.ofSeconds(3));
+
+        assertTrue(events.stream().anyMatch(event -> "session_report".equals(event.get("type"))));
+        Session restored = repository.findById(session.getId()).orElseThrow();
+        assertEquals("ended", restored.getStatus());
+        assertEquals(2, restored.getReport().metrics().segments());
+        assertEquals(3, repository.saveCalls());
         runner.shutdown();
     }
 
@@ -244,6 +287,28 @@ class RealtimeSessionRunnerTest {
         if (!"source_sync_state".equals(event.get("type"))) return false;
         @SuppressWarnings("unchecked") Map<String, Object> state = (Map<String, Object>) event.get("state");
         return state != null && String.valueOf(state.get("message")).startsWith("媒体同步：");
+    }
+
+    private static final class FlakyJdbcSessionRepository extends JdbcSessionRepository {
+        private final AtomicBoolean failFinalSave = new AtomicBoolean();
+        private final AtomicInteger saves = new AtomicInteger();
+
+        private FlakyJdbcSessionRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
+            super(jdbc, mapper);
+        }
+
+        private void failNextFinalSave() { failFinalSave.set(true); }
+        private int saveCalls() { return saves.get(); }
+
+        @Override
+        public Session save(Session session) {
+            saves.incrementAndGet();
+            if (failFinalSave.compareAndSet(true, false)
+                    && "ended".equals(session.getStatus()) && session.getReport() != null) {
+                throw new IllegalStateException("transient JDBC write failure");
+            }
+            return super.save(session);
+        }
     }
 
 }
