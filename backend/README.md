@@ -21,6 +21,11 @@ real session requires `DASHSCOPE_API_KEY`.
 Session creation preserves `sourceUrl`, `sourcePermission`, `ttsEnabled`, and
 the priority-ordered `glossary` fields used by the unchanged Vue client.
 
+The datasource driver is auto-detected from `MYSQL_URL`; `MYSQL_DRIVER` is an
+optional explicit override. For the local RabbitMQ instance, use the default
+vhost URL form `amqp://guest:guest@127.0.0.1:5673/` rather than encoding `/` as
+`%2f`, which some client versions interpret as a literal vhost name.
+
 For recorded or live online media, create the session with `inputMode=url` and
 provide `sourceUrl`. The Java runner invokes `ffmpeg` to decode HTTP(S) input
 into 16 kHz mono PCM, pacing frames at 40 ms and draining the decoder on EOF.

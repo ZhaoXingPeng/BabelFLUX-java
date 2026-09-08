@@ -171,6 +171,22 @@ ASR：将上述 TTS PCM 原样上传 /api/models/asr/transcriptions?model=fun-as
 边界：仅处理已实测的 ModelNotFound；超时、无 key、非法 PCM、provider 5xx、断网和重试 UI 仍需逐项做真实矩阵验证。
 ```
 
+### 2026-09-09 MySQL/Redis/RabbitMQ/Elasticsearch 四中间件启动与闭环
+
+```text
+实例：Elasticsearch 7.17.24 单节点 127.0.0.1:9200，cluster=green；MySQL 8.0.43 127.0.0.1:3307/babelflux；
+      Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5/OTP 28.5.0.6 AMQP 5673、管理 15673；前端 5173。
+启动缺陷：首次以 MYSQL_URL=jdbc:mysql://127.0.0.1:3307/babelflux 启动 8004 时，固定 H2 driver 导致启动失败；
+      删除 driver-class-name 硬编码后，Spring Boot 自动选择 com.mysql.cj.jdbc.Driver，Hikari 连接成功，Tomcat 8004 启动。
+      RabbitMQ URL 使用编码 vhost `%2f` 时真实返回 530 NOT_ALLOWED；改为默认 `/` vhost 后连接成功，消费者=2。
+真实链路：POST /api/sessions(inputMode=demo, sessionName=ES middleware smoke) -> WebSocket start/stop -> session_report；
+      MySQL babelflux_sessions.status=ended、segments_json 长度对应 2 段、report_json 非空；Redis PING=PONG；
+      Rabbit 主队列 ready=0、DLQ ready=0；报告 6f9291c4-4db5-4260-ac62-7d9de5e7d548-report index-status=indexed、attempts=0；
+      ES 搜索 q="MySQL ES smoke" 返回 total=3，并包含上述 reportId（包含此前两次同名烟测）。
+结论：默认 H2 与真实 MySQL URL 不再互相冲突，四中间件在同一 Java 实例完成持久化、消息消费和报告索引闭环；
+      vhost 写法和单节点 ES 安全未启用仍作为部署边界记录，不等同于 HA、TLS/RBAC 或长时压力测试。
+```
+
 ## 当前结论
 
 当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。

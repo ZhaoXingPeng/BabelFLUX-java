@@ -8,7 +8,7 @@ spring:
     url: ${MYSQL_URL:jdbc:h2:mem:babelflux;DB_CLOSE_DELAY=-1}
     username: ${MYSQL_USERNAME:sa}
     password: ${MYSQL_PASSWORD:}
-    driver-class-name: ${MYSQL_DRIVER:org.h2.Driver}
+    driver-class-name: ${MYSQL_DRIVER:}
   data:
     redis:
       url: ${REDIS_URL:redis://localhost:6379}
