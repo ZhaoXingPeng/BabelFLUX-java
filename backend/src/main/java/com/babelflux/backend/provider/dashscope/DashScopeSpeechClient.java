@@ -44,6 +44,8 @@ public class DashScopeSpeechClient {
 
     public AsrResult transcribe(byte[] audio, String model, String audioFormat, int sampleRate) {
         if (audio == null || audio.length == 0) throw new DashScopeClient.InvalidRequestException("audio file is empty");
+        String normalizedAudioFormat = audioFormat == null || audioFormat.isBlank() ? "pcm" : audioFormat;
+        validateAudioInput(audio, normalizedAudioFormat, sampleRate);
         ensureConfigured();
         String taskId = UUID.randomUUID().toString();
         List<String> events = new ArrayList<>();
@@ -54,7 +56,7 @@ public class DashScopeSpeechClient {
             ws.sendText(mapper.writeValueAsString(Map.of("header", Map.of("action", "run-task",
                     "task_id", taskId, "streaming", "duplex"), "payload", Map.of("task_group", "audio",
                     "task", "asr", "function", "recognition", "model", model,
-                    "parameters", Map.of("format", audioFormat, "sample_rate", sampleRate), "input", Map.of()))));
+                    "parameters", Map.of("format", normalizedAudioFormat, "sample_rate", sampleRate), "input", Map.of()))));
             Message started = waitForHeaderEvent(ws, "task-started", events);
             requestId = firstText(started.node().path("header"), "request_id", "requestId");
             for (int offset = 0; offset < audio.length; offset += 3200) {
@@ -175,6 +177,15 @@ public class DashScopeSpeechClient {
             throw new DashScopeClient.ConfigurationException("DASHSCOPE_API_KEY is required for speech calls");
         if (properties.getBaseUrl() == null || properties.getBaseUrl().isBlank())
             throw new DashScopeClient.ConfigurationException("DASHSCOPE_HTTP_BASE_URL is required for speech calls");
+    }
+
+    private static void validateAudioInput(byte[] audio, String audioFormat, int sampleRate) {
+        if (sampleRate < 8_000 || sampleRate > 48_000) {
+            throw new DashScopeClient.InvalidRequestException("sampleRate must be between 8000 and 48000 Hz");
+        }
+        if ("pcm".equalsIgnoreCase(audioFormat) && audio.length % 2 != 0) {
+            throw new DashScopeClient.InvalidRequestException("PCM audio byte length must be even");
+        }
     }
 
     private String asrUrl() { return websocketBaseUrl() + "/inference"; }

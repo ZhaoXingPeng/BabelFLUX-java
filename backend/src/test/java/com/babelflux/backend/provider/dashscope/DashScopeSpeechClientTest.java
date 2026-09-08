@@ -35,6 +35,42 @@ class DashScopeSpeechClientTest {
     }
 
     @Test
+    void rejectsUnalignedPcmBeforeOpeningProviderConnection() {
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties(), new ObjectMapper(),
+                (url, headers) -> { throw new AssertionError("provider must not be contacted"); });
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(DashScopeClient.InvalidRequestException.class,
+                () -> client.transcribe(new byte[]{1}, "fun-asr-realtime", "pcm", 16_000));
+
+        assertEquals("PCM audio byte length must be even", error.getMessage());
+    }
+
+    @Test
+    void rejectsUnsupportedSampleRateBeforeOpeningProviderConnection() {
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties(), new ObjectMapper(),
+                (url, headers) -> { throw new AssertionError("provider must not be contacted"); });
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(DashScopeClient.InvalidRequestException.class,
+                () -> client.transcribe(new byte[]{1, 2}, "fun-asr-realtime", "pcm", 96_000));
+
+        assertEquals("sampleRate must be between 8000 and 48000 Hz", error.getMessage());
+    }
+
+    @Test
+    void keepsNonPcmFormatsFreeOfPcmByteAlignmentRule() {
+        FakeConnection connection = new FakeConnection(
+                "{\"header\":{\"event\":\"task-started\"}}",
+                "{\"header\":{\"event\":\"task-finished\"}} ");
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties(), new ObjectMapper(),
+                (url, headers) -> connection);
+
+        var result = client.transcribe(new byte[]{1}, "fun-asr-realtime", "wav", 16_000);
+
+        assertEquals("", result.text());
+        assertEquals(1, connection.binaryBytes);
+    }
+
+    @Test
     void synthesizesRealtimeAudioAndSendsFinishLifecycle() {
         String audio = Base64.getEncoder().encodeToString(new byte[]{1, 2, 3});
         FakeConnection connection = new FakeConnection(
