@@ -45,6 +45,13 @@ public class FinalCorrectionService {
             return CorrectionResult.skipped("未配置百炼 API key，报告使用实时译文生成。");
         }
         String model = correctionModel(session.getModelProfile());
+        if (segments.size() > properties.getFinalCorrectionBatchSize()) {
+            return correctBatched(session, segments, model);
+        }
+        return correctSingle(session, segments, model);
+    }
+
+    private CorrectionResult correctSingle(Session session, List<Session.Segment> segments, String model) {
         Future<DashScopeClient.LlmGenerateResponse> task = executor.submit(() -> client.generate(
                 model, "text", messages(session, segments), Map.of(
                         "result_format", "message", "temperature", 0.2)));
@@ -87,6 +94,81 @@ public class FinalCorrectionService {
         }
     }
 
+    private CorrectionResult correctBatched(Session session, List<Session.Segment> segments, String model) {
+        long started = System.nanoTime();
+        List<List<Session.Segment>> batches = partition(segments, properties.getFinalCorrectionBatchSize());
+        List<Future<DashScopeClient.LlmGenerateResponse>> tasks = new ArrayList<>(batches.size());
+        for (List<Session.Segment> batch : batches) {
+            tasks.add(executor.submit(() -> client.generate(model, "text", messages(session, batch), Map.of(
+                    "result_format", "message", "temperature", 0.2))));
+        }
+
+        Map<String, String> finalById = new LinkedHashMap<>();
+        List<SessionReport.Revision> revisions = new ArrayList<>();
+        List<SessionReport.GlossaryHit> glossaryHits = new ArrayList<>();
+        List<String> summaries = new ArrayList<>();
+        List<String> qualityNotes = new ArrayList<>();
+        int rejected = 0;
+        int failed = 0;
+        int timedOut = 0;
+        long deadline = started + timeout().toNanos();
+        try {
+            for (int index = 0; index < tasks.size(); index++) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    timedOut += tasks.size() - index;
+                    break;
+                }
+                DashScopeClient.LlmGenerateResponse response;
+                try {
+                    response = tasks.get(index).get(remaining, TimeUnit.NANOSECONDS);
+                } catch (TimeoutException error) {
+                    timedOut++;
+                    break;
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    timedOut += tasks.size() - index;
+                    break;
+                } catch (ExecutionException | java.util.concurrent.CancellationException error) {
+                    failed++;
+                    continue;
+                }
+                if (response == null) {
+                    failed++;
+                    continue;
+                }
+                Parsed parsed = parse(response.content(), batches.get(index));
+                if (parsed == null) {
+                    failed++;
+                    continue;
+                }
+                finalById.putAll(parsed.finalById());
+                revisions.addAll(parsed.revisions());
+                glossaryHits.addAll(parsed.glossaryHits());
+                if (!value(parsed.summary()).isBlank()) summaries.add(parsed.summary());
+                if (!value(parsed.qualityNotes()).isBlank()) qualityNotes.add(parsed.qualityNotes());
+                rejected += parsed.rejectedForCompleteness();
+            }
+        } finally {
+            tasks.stream().filter(task -> !task.isDone()).forEach(task -> task.cancel(true));
+        }
+
+        int missing = segments.size() - finalById.size();
+        String status = missing == 0 ? "completed"
+                : rejected > 0 || !finalById.isEmpty() ? "partial"
+                : timedOut > 0 ? "timeout" : "fallback";
+        List<String> errors = new ArrayList<>();
+        if (missing > 0) errors.add("会后完整纠偏返回缺少 " + missing + " 句，缺失句已使用实时译文。");
+        if (rejected > 0) errors.add("完整性保护拒绝 " + rejected + " 句显著缩短的会后译文，保留实时译文。");
+        if (timedOut > 0) errors.add("会后完整纠偏有 " + timedOut + " 个批次超时，报告使用实时译文兜底。");
+        if (failed > 0) errors.add("会后完整纠偏有 " + failed + " 个批次调用失败，报告使用实时译文兜底。");
+        String error = String.join(" ", errors);
+        String summary = String.join(" ", summaries);
+        String quality = String.join(" ", qualityNotes);
+        return new CorrectionResult(status, model, finalById, List.copyOf(revisions),
+                List.copyOf(glossaryHits), summary, appendQualityNotes(quality, error), error, elapsed(started));
+    }
+
     public String correctionModel(String profile) {
         return switch (profile == null ? "" : profile) {
             case "快速低延迟" -> value(properties.getFastFinalCorrectionModel(), properties.getFinalCorrectionModel());
@@ -106,7 +188,7 @@ public class FinalCorrectionService {
     }
 
     private List<Map<String, Object>> messages(Session session, List<Session.Segment> segments) {
-        StringBuilder user = new StringBuilder("整场句子如下：\n");
+        StringBuilder user = new StringBuilder("待纠偏句子如下：\n");
         for (Session.Segment segment : segments) {
             user.append('[').append(segment.segmentId()).append("] ("
                     ).append(formatTime(segment.startMs())).append(") 原文: ")
@@ -129,7 +211,7 @@ public class FinalCorrectionService {
         return "你是 BabelFlux 会后完整纠偏模块。领域：" + value(session.getDomain(), "通用")
                 + "；源语言：" + value(session.getSourceLanguage(), "auto") + "；目标语言："
                 + value(session.getTargetLanguage(), "zh") + "。领域策略：" + focus + "\n"
-                + "通读整场原文和实时译文，为每句输出最终译文；仅修正明确的误译、术语、人名、数字、单位、否定或语义错误，不能扩写。"
+                + "通读提供的原文和实时译文，为每句输出最终译文；仅修正明确的误译、术语、人名、数字、单位、否定或语义错误，不能扩写。"
                 + "仅输出 JSON：{\"summary\":\"...\",\"qualityNotes\":\"...\","
                 + "\"glossaryHits\":[{\"term\":\"...\",\"translation\":\"...\"}],"
                 + "\"segments\":[{\"id\":\"...\",\"finalTranslation\":\"...\"}],"
@@ -153,7 +235,7 @@ public class FinalCorrectionService {
                     Session.Segment source = byId.get(id);
                     if (source != null && translation != null && !translation.isBlank()) {
                         String candidate = translation.trim();
-                        if (passesCompletenessGuard(source.translationText(), candidate)) finals.put(id, candidate);
+                        if (passesCompletenessGuard(source.sourceText(), source.translationText(), candidate)) finals.put(id, candidate);
                         else rejectedForCompleteness++;
                     }
                 }
@@ -221,14 +303,23 @@ public class FinalCorrectionService {
     }
 
     private static long elapsed(long started) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started); }
-    private static boolean passesCompletenessGuard(String live, String candidate) {
+    private static List<List<Session.Segment>> partition(List<Session.Segment> segments, int batchSize) {
+        List<List<Session.Segment>> batches = new ArrayList<>();
+        for (int from = 0; from < segments.size(); from += batchSize) {
+            batches.add(List.copyOf(segments.subList(from, Math.min(segments.size(), from + batchSize))));
+        }
+        return List.copyOf(batches);
+    }
+    private static boolean passesCompletenessGuard(String source, String live, String candidate) {
         String normalizedLive = compact(live);
         String normalizedCandidate = compact(candidate);
         if (normalizedLive.length() < COMPLETENESS_GUARD_MIN_LENGTH) return true;
         if (normalizedCandidate.length() < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_RATIO)) return false;
         if (longestCommonSubsequence(normalizedLive, normalizedCandidate)
                 < Math.ceil(normalizedLive.length() * COMPLETENESS_GUARD_MIN_OVERLAP)) return false;
-        return preservesLongTokens(normalizedLive, normalizedCandidate);
+        // Token checks use the original spacing; compacting first would merge
+        // adjacent words such as "Babel Flux" into one unrelated token.
+        return preservesLongTokens(source, live, candidate);
     }
     private static String compact(String value) { return value == null ? "" : value.replaceAll("\\s+", ""); }
     private static int longestCommonSubsequence(String left, String right) {
@@ -244,10 +335,42 @@ public class FinalCorrectionService {
         }
         return previous[right.length()];
     }
-    private static boolean preservesLongTokens(String live, String candidate) {
+    private static boolean preservesLongTokens(String source, String live, String candidate) {
+        java.util.Set<String> sourceTokens = new java.util.HashSet<>();
+        java.util.regex.Matcher sourceMatcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}")
+                .matcher(source == null ? "" : source);
+        while (sourceMatcher.find()) sourceTokens.add(sourceMatcher.group().toLowerCase(java.util.Locale.ROOT));
+        java.util.Set<String> candidateTokens = new java.util.HashSet<>();
+        java.util.regex.Matcher candidateMatcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}")
+                .matcher(candidate);
+        while (candidateMatcher.find()) candidateTokens.add(candidateMatcher.group().toLowerCase(java.util.Locale.ROOT));
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z0-9]{2,}").matcher(live);
-        while (matcher.find() && !candidate.contains(matcher.group())) return false;
+        String normalizedCandidate = candidate.toLowerCase(java.util.Locale.ROOT);
+        while (matcher.find()) {
+            String token = matcher.group();
+            if (candidate.contains(token)) continue;
+            boolean sourceBackedCorrection = sourceTokens.stream()
+                    .filter(sourceToken -> candidateTokens.contains(sourceToken)
+                            || sourceToken.length() >= 4 && normalizedCandidate.contains(sourceToken))
+                    .anyMatch(sourceToken -> editDistanceAtMost(token.toLowerCase(java.util.Locale.ROOT), sourceToken, 2));
+            if (!sourceBackedCorrection) return false;
+        }
         return true;
+    }
+    private static boolean editDistanceAtMost(String left, String right, int limit) {
+        if (Math.abs(left.length() - right.length()) > limit) return false;
+        int[] previous = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            int[] current = new int[right.length() + 1];
+            current[0] = i;
+            for (int j = 1; j <= right.length(); j++) {
+                current[j] = left.charAt(i - 1) == right.charAt(j - 1) ? previous[j - 1]
+                        : 1 + Math.min(previous[j - 1], Math.min(previous[j], current[j - 1]));
+            }
+            previous = current;
+        }
+        return previous[right.length()] <= limit;
     }
     private static String appendQualityNotes(String qualityNotes, String safety) {
         if (safety == null || safety.isBlank()) return value(qualityNotes);

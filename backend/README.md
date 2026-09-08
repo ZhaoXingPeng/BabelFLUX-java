@@ -126,8 +126,10 @@ without a reproducible benchmark.
 Online correction reviews the latest bounded window in a background task and
 emits `status=revised` plus a `revision_event` only for high-confidence changes.
 At session end, `qwen-plus` (or the selected profile) performs a full-report
-correction with a timeout; malformed, failed, or unconfigured calls fall back
-to the live translation while preserving a visible correction status.
+correction with a timeout. Sessions larger than `FINAL_CORRECTION_BATCH_SIZE`
+(default 8) are corrected in parallel windows and merged by segment ID;
+malformed, failed, or unconfigured calls fall back to the live translation
+while preserving a visible correction status.
 
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
 is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC

@@ -26,6 +26,7 @@ public class DashScopeProperties {
     private int realtimeRevisionWindowSegments = 4;
     private int realtimeRevisionMaxPerMinute = 6;
     private int realtimeQueueFrames = 250;
+    private int finalCorrectionBatchSize = 8;
 
     public String getApiKey() { return apiKey; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
@@ -73,6 +74,13 @@ public class DashScopeProperties {
             throw new IllegalArgumentException("Realtime queue frames must be between 25 and 10000");
         }
         this.realtimeQueueFrames = value;
+    }
+    public int getFinalCorrectionBatchSize() { return finalCorrectionBatchSize; }
+    public void setFinalCorrectionBatchSize(int value) {
+        if (value < 1 || value > 64) {
+            throw new IllegalArgumentException("Final correction batch size must be between 1 and 64");
+        }
+        this.finalCorrectionBatchSize = value;
     }
 
     public boolean isOpenAiCompatible() {
