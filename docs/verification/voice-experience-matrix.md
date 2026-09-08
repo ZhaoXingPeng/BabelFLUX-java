@@ -40,7 +40,7 @@
 | I-05 | Provider 超时 | HTTP/WS 设置连接与读取超时；会后纠偏失败回退实时译文 | PASS：provider 与 `FinalCorrectionServiceTest` |
 | I-06 | 资源清理 | runner 使用 virtual thread、bounded final drain 和 `AutoCloseable` provider | PASS：runner 生命周期测试；长时资源曲线未测 |
 | I-07 | 实时输出音频 | `response.audio.delta` 归属 segment 并下发 `audio_segment` base64 | PASS：客户端归一化测试；真实 TTS 输出已验证，LiveTranslate TTS 音频未单独验收 |
-| I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3307、Redis 6380、ES 9200 live；Rabbit live skipped（本机未安装） |
+| I-08 | 中间件可靠性 | MySQL 事实源、Redis TTL 票据、Rabbit outbox、ES 派生索引 | PASS：MySQL 3308、Redis 6380、RabbitMQ 4.3.5/OTP 28 5673、ES 9200 均有真实链路证据；Rabbit 包含断 broker 重试、重启恢复、重复投递幂等与 DLQ |
 | I-09 | 多实例索引 | ES job `pending -> processing -> indexed`，owner + lease 条件更新，过期可恢复 | PASS：两实例 ES live 竞争与过期 lease 恢复；H2 测试覆盖条件更新/幂等 |
 | I-10 | 安全边界 | API key 仅环境变量；URL 媒体 host/私网地址限制；错误不回传 header/audio | PASS：现有安全与媒体 URL 测试 |
 
@@ -92,7 +92,7 @@ P50/P95/P99：未测（单次烟测，不形成分位数）
 基础检查：redis-cli ping=PONG；SET babelflux:test live EX 30；TTL=30；GET=live
 应用链路：创建 session 后 Redis 出现 websocket/handoff TTL key；首次 handoff claim 返回 wsToken
 并发/重放边界：同一 handoff token 第二次 claim 返回 HTTP 409，Redis Lua 原子消费生效
-未覆盖：RabbitMQ outbox 仍未安装，保持 skipped
+RabbitMQ 真实验证已补齐；剩余边界是多节点集群、网络分区和长时压测，不把单节点烟测当作这些能力的证明。
 ```
 
 ### 2026-09-08 Elasticsearch 报告索引与搜索
@@ -117,6 +117,28 @@ P50/P95/P99：未测（单次烟测，不形成分位数）
 边界：这是共享单节点 ES 的真实并发/恢复烟测，不替代多节点故障压测和长时 P95/P99 观测
 ```
 
+### 2026-09-08 RabbitMQ 真实 outbox/consumer 故障恢复
+
+```text
+环境：RabbitMQ 4.3.5，Erlang/OTP 28.5.0.6，节点 rabbitmq_it@wt；AMQP 5673，管理 15673，
+      独立 data/log 目录 C:\project\BabelFLUX-middleware-it\rabbitmq-lease-20260908；
+      MySQL 8.0.43 127.0.0.1:3308/babelflux_outbox_it；后端 http://127.0.0.1:8002；前端既有 5173
+启动证据：rabbitmqctl status=0；RabbitMQ 4.3.5；OTP 28；无 alarm；管理 API HTTP 200；
+      真实后端日志确认 MySQL Hikari 连接和 AMQP 5673 连接；队列消费者=1
+首投：POST /api/sessions -> outbox session.created；MySQL status=published、attempts=0、
+      last_error/lease=null；receipt 同 event_id 1 行；主队列 ready=0，DLQ ready=0
+重复投递：管理 API 重发同 payload，routed=true；receipt 仍为 1 行，主队列 ready=0
+断 broker：停止 rabbitmq_it 后创建会话；修复后 4 秒内 status=pending、attempts=2、
+      last_error=java.net.ConnectException: Connection refused: getsockopt、lease 清空；
+      旧实现同窗口 attempts 曾达 29+，根因为 MySQL current_timestamp(+08:00) 与 Java UTC 混用
+恢复：使用相同 OTP28/数据目录启动 broker；事件按退避恢复并最终 published、last_error=null，
+      receipt=1，主队列 ready=0
+坏消息/DLQ：向 exchange 投递 9 bytes `{not-json`；listener JsonParseException，
+      x-death.reason=rejected；DLQ GET 返回 payload `{not-json`，message_count=0（已 ack 取证）
+结论：真实 outbox->Rabbit exchange->consumer->MySQL receipt 闭环、重复幂等、断 broker 恢复和
+      rejected 消息 DLQ 均通过；不等同于多节点 HA、网络分区、TLS/RBAC 和 20 分钟压力测试
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/Elasticsearch 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、真实 RabbitMQ、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行”成立；尚未证明长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、多轮用户体验和音频前端算法能力。后续 PR 必须先补 U-07～U-12 的可复现证据，再讨论性能优化百分比。

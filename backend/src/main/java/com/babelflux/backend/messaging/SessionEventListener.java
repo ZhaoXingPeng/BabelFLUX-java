@@ -1,6 +1,8 @@
 package com.babelflux.backend.messaging;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.Timestamp;
+import java.time.Instant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,8 +26,8 @@ public class SessionEventListener {
         SessionEvent event = mapper.readValue(payload, SessionEvent.class);
         try {
             jdbc.update("insert into babelflux_session_event_receipts "
-                            + "(event_id, event_type, session_id, received_at) values (?, ?, ?, current_timestamp)",
-                    event.eventId(), event.eventType(), event.sessionId());
+                            + "(event_id, event_type, session_id, received_at) values (?, ?, ?, ?)",
+                    event.eventId(), event.eventType(), event.sessionId(), Timestamp.from(Instant.now()));
         } catch (DuplicateKeyException duplicate) {
             // Redelivery is expected; the unique event_id makes the consumer idempotent.
         }

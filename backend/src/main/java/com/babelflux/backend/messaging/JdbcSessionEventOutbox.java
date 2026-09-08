@@ -23,23 +23,25 @@ public class JdbcSessionEventOutbox {
 
     public void append(SessionEvent event) {
         try {
+            Timestamp now = Timestamp.from(Instant.now());
             jdbc.update("insert into babelflux_session_event_outbox "
                             + "(event_id, event_type, schema_version, session_id, occurred_at, payload, status, attempts, next_attempt_at) "
-                            + "values (?, ?, ?, ?, ?, ?, 'pending', 0, current_timestamp)",
+                            + "values (?, ?, ?, ?, ?, ?, 'pending', 0, ?)",
                     event.eventId(), event.eventType(), event.schemaVersion(), event.sessionId(),
-                    Timestamp.from(event.occurredAt()), mapper.writeValueAsString(event));
+                    Timestamp.from(event.occurredAt()), mapper.writeValueAsString(event), now);
         } catch (JsonProcessingException error) {
             throw new IllegalStateException("session event cannot be serialized", error);
         }
     }
 
     public List<PendingEvent> pending(int limit) {
+        Timestamp now = Timestamp.from(Instant.now());
         return jdbc.query("select event_id, event_type, session_id, payload, attempts "
                         + "from babelflux_session_event_outbox where "
-                        + "(status='pending' and next_attempt_at <= current_timestamp) "
+                        + "(status='pending' and next_attempt_at <= ?) "
                         + "or (status='processing' and lease_until is not null "
-                        + "and lease_until <= current_timestamp) order by created_at limit ?",
-                this::map, limit);
+                        + "and lease_until <= ?) order by created_at limit ?",
+                this::map, now, now, limit);
     }
 
     /**
@@ -47,17 +49,18 @@ public class JdbcSessionEventOutbox {
      * concurrent relays mutually exclusive while allowing expired leases to recover.
      */
     public boolean tryClaim(String eventId, String owner, Instant leaseUntil) {
+        Timestamp now = Timestamp.from(Instant.now());
         return jdbc.update("update babelflux_session_event_outbox set status='processing', lease_owner=?, lease_until=? "
-                        + "where event_id=? and ((status='pending' and next_attempt_at <= current_timestamp) "
-                        + "or (status='processing' and lease_until is not null and lease_until <= current_timestamp))",
-                owner, Timestamp.from(leaseUntil), eventId) == 1;
+                        + "where event_id=? and ((status='pending' and next_attempt_at <= ?) "
+                        + "or (status='processing' and lease_until is not null and lease_until <= ?))",
+                owner, Timestamp.from(leaseUntil), eventId, now, now) == 1;
     }
 
     public void markPublished(String eventId, String owner) {
-        jdbc.update("update babelflux_session_event_outbox set status='published', published_at=current_timestamp, "
+        jdbc.update("update babelflux_session_event_outbox set status='published', published_at=?, "
                 + "last_error=null, lease_owner=null, lease_until=null where event_id=? "
                 + "and status='processing' and lease_owner=?",
-                eventId, owner);
+                Timestamp.from(Instant.now()), eventId, owner);
     }
 
     public void markFailed(String eventId, String owner, Instant nextAttemptAt, String error) {

@@ -53,6 +53,30 @@ class MysqlSessionEventOutboxIntegrationTest {
         }
     }
 
+    @Test
+    void usesApplicationUtcClockForFutureRetryOnNonUtcMySql() {
+        JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
+                required("TEST_MYSQL_URL"), required("TEST_MYSQL_USERNAME"),
+                System.getenv().getOrDefault("TEST_MYSQL_PASSWORD", "")));
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc,
+                JsonMapper.builder().addModule(new JavaTimeModule()).build());
+        String eventId = "mysql-it-clock-" + UUID.randomUUID();
+        String owner = "mysql-it-clock";
+
+        try {
+            outbox.append(new SessionEvent(eventId, "session.created", 1, "mysql-it-clock-session",
+                    Instant.now(), Map.of("status", "created")));
+            assertTrue(outbox.tryClaim(eventId, owner, Instant.now().plusSeconds(30)));
+            Instant retryAt = Instant.now().plusSeconds(30);
+            outbox.markFailed(eventId, owner, retryAt, "broker connection refused");
+
+            assertTrue(outbox.pending(10).stream().noneMatch(event -> event.eventId().equals(eventId)),
+                    "a future retry must not be immediately eligible when MySQL server timezone is local time");
+        } finally {
+            jdbc.update("delete from babelflux_session_event_outbox where event_id=?", eventId);
+        }
+    }
+
     private static String required(String name) {
         String value = System.getenv(name);
         if (value == null || value.isBlank()) throw new IllegalStateException(name + " must be set for MySQL integration tests");
