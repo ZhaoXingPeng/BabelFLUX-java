@@ -77,7 +77,14 @@ public class ApiExceptionHandler {
         detail.put("message", error.getMessage());
         if (error.getCode() != null) detail.put("code", error.getCode());
         if (error.getRequestId() != null) detail.put("requestId", error.getRequestId());
-        return org.springframework.http.ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(detail);
+        return org.springframework.http.ResponseEntity.status(providerStatus(error)).body(detail);
+    }
+
+    private static HttpStatus providerStatus(UpstreamException error) {
+        // The caller can correct an unavailable provider model. Do not present it
+        // as a transient gateway failure that clients should retry.
+        if ("ModelNotFound".equals(error.getCode())) return HttpStatus.UNPROCESSABLE_ENTITY;
+        return HttpStatus.BAD_GATEWAY;
     }
 
     @ExceptionHandler(HandoffTokenException.class)

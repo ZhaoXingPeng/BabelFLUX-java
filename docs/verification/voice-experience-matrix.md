@@ -27,7 +27,7 @@
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | NOT RUN |
 | U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
-| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PARTIAL：错误映射有单测，真实故障矩阵未跑完 |
+| U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PARTIAL：真实 `ModelNotFound` 已从误导性 502 修正为 HTTP 422 + 稳定 code/message；其余故障矩阵未跑完 |
 
 ## 用户不可见的底层矩阵
 
@@ -158,6 +158,17 @@ ASR：将上述 TTS PCM 原样上传 /api/models/asr/transcriptions?model=fun-as
      修复只返回 session.created 时错误超时并产生 HTTP 502 的问题。
 协议边界：一次发送 149760 bytes 的单帧会触发 WebSocket close 1009；浏览器采集实现按约 40 ms 分帧，不触发该限制。
 结论：用户可见的 TTS 播放、ASR final、实时双语字幕和实时 TTS 音频均有真实证据；长时、多设备、网络分区和多节点 HA 仍未覆盖。
+```
+
+### 2026-09-09 不可用 ASR 模型错误分类
+
+```text
+复现：已启动的 :8003 后端调用 /api/models/asr/transcriptions，传入真实 TTS PCM、
+      model=qwen3-asr-flash-realtime、audioFormat=pcm、sampleRate=24000。
+修复前：百炼返回 code=ModelNotFound 和明确消息，但 API 固定映射为 HTTP 502；客户端会将可纠正的模型参数错误误认为瞬时网关故障并可能重试。
+修复：ApiExceptionHandler 对 code=ModelNotFound 返回 HTTP 422，保留 message/code/requestId；其他 provider 上游失败仍返回 HTTP 502。
+验证：新增 ApiExceptionHandlerTest；后端重启后对同一真实请求实际返回 422 + ModelNotFound，不输出 API key 或音频。
+边界：仅处理已实测的 ModelNotFound；超时、无 key、非法 PCM、provider 5xx、断网和重试 UI 仍需逐项做真实矩阵验证。
 ```
 
 ## 当前结论
