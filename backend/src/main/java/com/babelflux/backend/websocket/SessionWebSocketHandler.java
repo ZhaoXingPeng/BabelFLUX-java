@@ -3,20 +3,26 @@ package com.babelflux.backend.websocket;
 import com.babelflux.backend.service.SessionService;
 import com.babelflux.backend.service.SessionTokenService;
 import com.babelflux.backend.service.RealtimeSessionRunner;
+import com.babelflux.backend.infrastructure.RedisSessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
@@ -27,6 +33,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 public class SessionWebSocketHandler extends TextWebSocketHandler implements WebSocketHandler {
+    private static final long RUNNER_LEASE_TTL_SECONDS = 30;
+    private static final long RUNNER_LEASE_RENEW_SECONDS = 10;
     private final ObjectMapper mapper;
     private final SessionService sessions;
     private final SessionTokenService tokens;
@@ -35,23 +43,41 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     private final ConcurrentMap<String, RealtimeSessionRunner.RunHandle> runs = new ConcurrentHashMap<>();
     /** One primary realtime runner is allowed per session; handoff sockets are read-only. */
     private final ConcurrentMap<String, String> activeSessionSockets = new ConcurrentHashMap<>();
+    private final RedisSessionRepository redis;
+    private final ConcurrentMap<String, ScheduledFuture<?>> leaseRenewals = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, SessionEventHub.Subscription> handoffSubscriptions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Future<?>> handoffTasks = new ConcurrentHashMap<>();
     private final ExecutorService handoffExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ScheduledExecutorService leaseExecutor;
 
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                                    RealtimeSessionRunner runner) {
-        this(mapper, sessions, tokens, runner, new SessionEventHub());
+        this(mapper, sessions, tokens, runner, new SessionEventHub(), (RedisSessionRepository) null);
+    }
+
+    public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
+                                   RealtimeSessionRunner runner, SessionEventHub eventHub) {
+        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) null);
     }
 
     @Autowired
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
-                                   RealtimeSessionRunner runner, SessionEventHub eventHub) {
+                                   RealtimeSessionRunner runner, SessionEventHub eventHub,
+                                   ObjectProvider<RedisSessionRepository> redisProvider) {
+        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) redisProvider.getIfAvailable());
+    }
+
+    SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
+                            RealtimeSessionRunner runner, SessionEventHub eventHub,
+                            RedisSessionRepository redis) {
         this.mapper = mapper;
         this.sessions = sessions;
         this.tokens = tokens;
         this.runner = runner;
         this.eventHub = eventHub;
+        this.redis = redis;
+        this.leaseExecutor = redis == null ? null
+                : Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("runner-lease-renew").factory());
     }
 
     @Override
@@ -103,6 +129,22 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                     send(socket, Map.of("type", "error", "message", "会话已在其他连接中运行"));
                     return;
                 }
+                if (redis != null) {
+                    boolean acquired;
+                    try {
+                        acquired = redis.tryAcquireRunnerLease(id, socket.getId(),
+                                Duration.ofSeconds(RUNNER_LEASE_TTL_SECONDS));
+                    } catch (RuntimeException error) {
+                        activeSessionSockets.remove(id, socket.getId());
+                        send(socket, Map.of("type", "error", "message", "会话锁服务暂不可用"));
+                        return;
+                    }
+                    if (!acquired) {
+                        activeSessionSockets.remove(id, socket.getId());
+                        send(socket, Map.of("type", "error", "message", "会话已在其他实例中运行"));
+                        return;
+                    }
+                }
                 session.applyOverrides(text(payload, "sourceLanguage"), text(payload, "targetLanguage"),
                         text(payload, "domain"), text(payload, "inputMode"), text(payload, "sourceUrl"),
                         text(payload, "modelProfile"));
@@ -115,7 +157,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                             reportEmitted.set(true);
                             RealtimeSessionRunner.RunHandle current = handleRef.get();
                             if (current != null) runs.remove(socket.getId(), current);
-                            activeSessionSockets.remove(id, socket.getId());
+                            releaseRunnerOwner(id, socket.getId());
                         }
                         eventHub.publish(id, event);
                         if ("session_report".equals(event.get("type"))) eventHub.complete(id);
@@ -125,10 +167,12 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                     runs.put(socket.getId(), handle);
                     if (reportEmitted.get()) {
                         runs.remove(socket.getId(), handle);
-                        activeSessionSockets.remove(id, socket.getId());
+                        releaseRunnerOwner(id, socket.getId());
+                    } else {
+                        scheduleLeaseRenewal(id, socket);
                     }
                 } catch (RuntimeException | Error error) {
-                    activeSessionSockets.remove(id, socket.getId());
+                    releaseRunnerOwner(id, socket.getId());
                     throw error;
                 }
             }
@@ -139,6 +183,19 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                 if (owner != null && !owner.equals(socket.getId())) {
                     send(socket, Map.of("type", "error", "message", "会话正在其他连接中运行"));
                     return;
+                }
+                if (owner == null && redis != null) {
+                    boolean leaseHeld;
+                    try {
+                        leaseHeld = redis.runnerLeaseHeld(id);
+                    } catch (RuntimeException error) {
+                        send(socket, Map.of("type", "error", "message", "会话锁服务暂不可用"));
+                        return;
+                    }
+                    if (leaseHeld) {
+                        send(socket, Map.of("type", "error", "message", "会话正在其他实例中运行"));
+                        return;
+                    }
                 }
                 var report = sessions.finish(id);
                 send(socket, Map.of("type", "session_report", "reportId", report.reportId(),
@@ -191,7 +248,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     public void afterConnectionClosed(WebSocketSession socket, CloseStatus status) {
         RealtimeSessionRunner.RunHandle handle = runs.remove(socket.getId());
         if (handle != null) handle.stop();
-        activeSessionSockets.remove(pathVariable(socket, "sessionId"), socket.getId());
+        releaseRunnerOwner(pathVariable(socket, "sessionId"), socket.getId());
         SessionEventHub.Subscription subscription = handoffSubscriptions.remove(socket.getId());
         if (subscription != null) eventHub.unsubscribe(subscription);
         Future<?> task = handoffTasks.remove(socket.getId());
@@ -218,9 +275,56 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         handoffTasks.put(socket.getId(), task);
     }
 
+    private void scheduleLeaseRenewal(String sessionId, WebSocketSession socket) {
+        if (redis == null || leaseExecutor == null) return;
+        ScheduledFuture<?> task = leaseExecutor.scheduleAtFixedRate(
+                () -> renewLease(sessionId, socket), RUNNER_LEASE_RENEW_SECONDS,
+                RUNNER_LEASE_RENEW_SECONDS, TimeUnit.SECONDS);
+        ScheduledFuture<?> previous = leaseRenewals.put(sessionId, task);
+        if (previous != null) previous.cancel(false);
+    }
+
+    private void renewLease(String sessionId, WebSocketSession socket) {
+        String socketId = socket.getId();
+        if (!socketId.equals(activeSessionSockets.get(sessionId))) return;
+        boolean renewed;
+        try {
+            renewed = redis.renewRunnerLease(sessionId, socketId,
+                    Duration.ofSeconds(RUNNER_LEASE_TTL_SECONDS));
+        } catch (RuntimeException error) {
+            renewed = false;
+        }
+        if (renewed) return;
+        RealtimeSessionRunner.RunHandle handle = runs.get(socketId);
+        if (handle != null) handle.stop();
+        releaseRunnerOwner(sessionId, socketId);
+        try {
+            send(socket, Map.of("type", "error", "message", "会话租约续期失败，已停止实时会话"));
+        } catch (IOException ignored) {
+            // The socket may already be closed while the lease task is running.
+        }
+    }
+
+    private void releaseRunnerOwner(String sessionId, String socketId) {
+        String current = activeSessionSockets.get(sessionId);
+        if (current != null && !current.equals(socketId)) return;
+        activeSessionSockets.remove(sessionId, socketId);
+        ScheduledFuture<?> renewal = leaseRenewals.remove(sessionId);
+        if (renewal != null) renewal.cancel(false);
+        if (redis != null) {
+            try {
+                redis.releaseRunnerLease(sessionId, socketId);
+            } catch (RuntimeException ignored) {
+                // The lease has a TTL and will expire if Redis is unavailable during cleanup.
+            }
+        }
+    }
+
     @PreDestroy
     void shutdown() {
         handoffTasks.values().forEach(task -> task.cancel(true));
+        leaseRenewals.values().forEach(task -> task.cancel(true));
+        if (leaseExecutor != null) leaseExecutor.shutdownNow();
         handoffExecutor.shutdownNow();
     }
 

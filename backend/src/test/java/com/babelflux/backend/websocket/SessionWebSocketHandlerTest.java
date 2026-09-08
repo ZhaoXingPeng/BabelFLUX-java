@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.when;
 import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.domain.Session;
 import com.babelflux.backend.infrastructure.InMemorySessionRepository;
+import com.babelflux.backend.infrastructure.RedisSessionRepository;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.search.ReportIndexingPort;
@@ -105,6 +107,24 @@ class SessionWebSocketHandlerTest {
         assertTrue(sent(second).get("message").asText().contains("其他连接"));
         handler.afterConnectionClosed(first, CloseStatus.NORMAL);
         handler.afterConnectionClosed(second, CloseStatus.NORMAL);
+    }
+
+    @Test
+    void rejectsStopFromSocketWhenAnotherInstanceHoldsRunnerLease() throws Exception {
+        RedisSessionRepository redis = mock(RedisSessionRepository.class);
+        when(redis.tryAcquireRunnerLease(anyString(), anyString(), any())).thenReturn(false);
+        when(redis.runnerLeaseHeld("ws-1")).thenReturn(true);
+        handler = new SessionWebSocketHandler(mapper, sessions, tokens, runner, new SessionEventHub(), redis);
+        String token = tokens.issue("ws-1");
+        WebSocketSession socket = socket("ws-1", token);
+
+        handler.afterConnectionEstablished(socket);
+        handler.handleTextMessage(socket, new TextMessage("{\"type\":\"start_session\"}"));
+        handler.handleTextMessage(socket, new TextMessage("{\"type\":\"stop_session\"}"));
+
+        assertNull(session.getReport(), "a remote runner lease must block local finish");
+        assertTrue(sent(socket).get("message").asText().contains("其他实例"));
+        verify(runner, org.mockito.Mockito.never()).start(any(Session.class), any());
     }
 
     @Test
