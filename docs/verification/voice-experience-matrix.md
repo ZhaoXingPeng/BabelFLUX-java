@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.11（2026-09-09）
+版本：v1.12（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -36,6 +36,7 @@
 | U-18 | 跨实例 handoff 字幕投送 | 主 WS 与 handoff WS 连接不同后端实例，主端启动真实会话 | handoff 端收到与主端相同的字幕、状态和 session_report，不出现“已连接但无字幕” | PASS：8013 主端与 8014 handoff 各收到 6 个启动/字幕事件及同一 `session_report` |
 | U-19 | 跨实例启动状态即时可见 | 8013 创建会话并发送带语言/领域覆盖的 `start_session`，立即从 8014 查询历史 | 查询立即显示 `running` 及本次覆盖参数，不需等会话结束 | PASS：当前提交 `dc29ad9` 实测 250 ms 内读到 `running/ja/en/running-state-real/balanced`；结束后两实例历史一致 |
 | U-20 | 报告时长准确 | 发送约 3 秒真实语音，等待 provider/纠偏完成后查看历史和报告 | 报告时长跟随音频时间轴，不因后端处理等待膨胀 | PASS：修复后百炼 5 次报告均为 3004 ms；墙钟完成 4156–8748 ms，时长不随处理等待变化 |
+| U-21 | 会后纠偏完整性 | 5 轮真实 TTS PCM 通过 LiveTranslate，比较实时最终译文与会后报告 | 会后纠偏不得删减实时译文中的句意、数字或术语；异常候选回退实时译文并明确标记 | PASS：基线 session `12e27456-209d-476d-a3ef-9f123e3b9dae` 发现 2 句长度删减和 1 句等长语义删减；修复后 session `92c61a5e-2d2c-4886-ba41-8983add946ee` 5/5 段报告均保留实时内容，`correctionStatus=completed`、0 error |
 
 ## 用户不可见的底层矩阵
 
@@ -61,6 +62,7 @@
 | I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | PASS：H2/JDBC 与 handler 测试 14/14；真实 MySQL 查询启动后即为 running，最终 `segments_json`=2、`report_json` 非空，outbox 生命周期事件各 1 条 |
 | I-19 | 最新快照原子最终化 | runner 等待纠偏任务后将内存 `Session` 交给带行锁的 `finish(Session)`，报告与最终快照一次保存；瞬时写入失败最多重试一次 | PASS：H2 JDBC 故障注入首次最终写入失败后重试成功，报告仍含 2 段；真实 MySQL 最终行与报告均为 2 段，生命周期事件各 1 条 |
 | I-20 | 音频时长与处理耗时隔离 | `SessionReportService` 有字幕时使用 segment endMs 时间轴；空会话才使用 wall-clock fallback | PASS：受控 60 s wall-clock/3004 ms segment 测试返回 3004 ms；真实百炼 5/5 返回 3004 ms，MySQL 与 REST 一致 |
+| I-21 | 会后纠偏完整性保护 | `FinalCorrectionService` 对长译文执行长度比例、最长公共子序列重叠和长数字/英文 token 保留校验；拒绝项不进入 `finalById` 或 revision | PASS：`FinalCorrectionServiceTest` 4/4；基线真实报告出现“第一轮检查完成”等删减候选，修复后候选被保留/拒绝策略不会覆盖实时译文，报告质量说明记录保护结果 |
 
 ## 固定测量记录
 
@@ -369,6 +371,23 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 测试：`mvn -B '-Dtest=SessionReportServiceTest,RealtimeSessionRunnerTest' test`，8/8 通过；受控 60 s wall-clock/3004 ms segment 测试固定返回 3004 ms，空会话仍返回 60000 ms
 失败样例与边界：segment 时间戳只覆盖已识别语句，长静音且无字幕的精确媒体时长仍需独立 source duration 字段；本轮不宣称长时稳定性或 P95 处理延迟优化
 结论：U-20/I-20 已从“报告时长受后端等待污染”修复为“有字幕时使用音频时间轴、空会话墙钟兜底”；用户看到的会议时长不再随 provider/纠偏耗时变化
+```
+
+### 2026-09-09 会后纠偏完整性真实回归（Issue #70）
+
+```text
+提交：fix/final-correction-completeness（提交前工作区）
+机器/CPU/内存/JDK：Windows 11 x64，本机，JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+输入与模型：百炼 `qwen3-tts-flash-realtime` 生成 5 轮英文 16 kHz PCM；LiveTranslate 实时 ASR/翻译；会后 `qwen-flash` 纠偏
+修复前失败样例：session `12e27456-209d-476d-a3ef-9f123e3b9dae` 的实时译文“第一轮检查延迟低”“第三轮核查，编号1”等被会后改成“第一轮检查完成”“第三轮检查编号一”；原有长度阈值只拒绝 2 句，等长语义删减仍可覆盖报告
+修复后实验：session `92c61a5e-2d2c-4886-ba41-8983add946ee` 完成 5 段 transcript final、5 段 translation final、1 个 session_report、0 error；报告 `correctionStatus=completed`，5 段均保留实时关键信息，final revisions=4
+用户可见结果：报告不再把“低延迟表现”“数字一、二、三”“暂停并恢复边界”等内容压缩成无依据的短句；正常纠偏仍显示术语微调
+底层证据：`FinalCorrectionService` 增加长度比例、LCS 内容重叠（70%）及长数字/英文 token 保留校验；拒绝候选不进入 `finalById`/revision，状态降为 `partial` 并在 qualityNotes 记录保护原因
+测试：`mvn -B '-Dtest=FinalCorrectionServiceTest' test` 4/4；后端全量 101 通过、0 失败、4 个外部集成测试按默认配置跳过；前端 55/55、生产构建通过
+失败与边界：首次真实探针因百炼 TTS 单次读取超时（30 s）未进入会话，重试成功；语义重叠规则偏保守，极短译文不拦截，长时稳定性和多语种数字等价表达仍需扩展语料
+结论：U-21/I-21 已由真实失败样例驱动完成保护，报告优先保证实时译文完整性，再接受会后模型修订；本轮不宣称语义评测或长时质量达标
 ```
 
 ## 当前结论
