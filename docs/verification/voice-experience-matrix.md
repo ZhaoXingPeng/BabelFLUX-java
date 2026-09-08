@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.17（2026-09-09）
+版本：v1.18（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -68,6 +68,7 @@
 | I-23 | TTS 模型选择与握手预算 | `DashScopeSpeechClient` 使用可配置 `allowedTtsModels` 白名单；允许模型握手使用独立 deadline，音频/结束阶段保留通用读取超时 | PASS：单测 9/9；未知模型真实延迟由 30,453 ms 降为 135 ms/HTTP 400，合法模型 1,486 ms/HTTP 200；配置 `DASHSCOPE_ALLOWED_TTS_MODELS` 可扩展白名单 |
 | I-24 | provider 事件乱序快照 | `translation_final` 可能先于 `source_final`；后到的完整原文必须刷新同一持久化 segment，并保留既有 `revised` 状态 | PASS：修复前 session `6f1b13e3-0106-4d92-a59f-6cfb241e01dc` 报告原文落后于 WS final；PR #78（commit `647290e`）后 session `97445ce4-dbbc-452b-b1bd-26a6190972f0` 5/5 段 WS/REST/MySQL 一致，outbox `created/finished/generated` 各 1 |
 | I-25 | 长会话纠偏分批与候选完整性 | `FinalCorrectionService` 按 `FINAL_CORRECTION_BATCH_SIZE` 分批并行调用；长度比例、LCS 和源文 token 证据共同保护候选 | PASS：PR #83 commit `d595ac9`；默认每批 8 句，真实 20 句拆为 3 批并汇总 20 个 `finalById`/20 条 final revision；MySQL `segments_json=20`、报告非空；单测 6/6 覆盖分批、缺段回退、无依据删减拒绝和源文支持专名纠错 |
+| I-26 | 纠偏批次完成顺序与总 deadline | 长会话批次通过 `ExecutorCompletionService` 按完成顺序消费；慢批不得掩盖 deadline 内已完成批次 | PASS：PR #86 commit `31e8565`；旧实现测试实际返回 `timeout` 且丢失后两批，修复后回归保留 2 个已完成批次并将慢批记为 timeout；真实 session `22e0a25e-c4df-4fe6-bad2-249fc4fe5c71` 20/20 报告段、`correctionStatus=completed`、`correctionElapsedMs=13960` |
 
 ## 固定测量记录
 
@@ -497,6 +498,22 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：U-22/I-25 已由真实缺段样例驱动修复并在前后端+中间件+百炼链路复核通过；保护策略优先保证用户看到的实时句意完整，后续补长时和多语种基准
 ```
 
+### 2026-09-09 纠偏批次完成顺序真实回归（Issue #84 / PR #86）
+
+```text
+提交：fix/voice-correction-completion-order @ 31e8565
+机器/CPU/内存/JDK：Windows 11 x64；Intel i5-12600KF；16 GB；JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173 / 当前分支实例 http://127.0.0.1:8013、http://127.0.0.1:8014
+中间件：MySQL 8.0.43 127.0.0.1:3307；Redis 8.10.1 127.0.0.1:6380；RabbitMQ 4.3.5 5673；Elasticsearch 7.17.24 9200
+失败回归：单测设置每批 1 句、总 deadline 300 ms；第 1 批延迟 500 ms，第 2/3 批立即完成。旧实现按下标阻塞，实际结果为 `timeout`，后两批完全丢失
+修复：以 `ExecutorCompletionService` 按完成顺序消费 future；deadline 仍为整场总预算，完成批次先入结果，未完成批次统一取消并记录 timeout
+定向结果：`FinalCorrectionServiceTest` 7/7；新增测试断言 s2/s3 保留、s1 超时并返回 `partial`
+真实结果：session `22e0a25e-c4df-4fe6-bad2-249fc4fe5c71`；20/20 transcript final、20/20 translation final、报告 20 段；`correctionStatus=completed`、`correctionError=""`、`correctionElapsedMs=13960`、final revisions=20；WS `lagging=0`、error=0，媒体时长 80080 ms，墙钟 55149 ms
+底层证据：MySQL `status=ended`、`segments_json=20`、`report_json` 非空；Rabbit outbox `session.created=1`、`session.finished=1`、`report.generated=1`；REST 历史/报告均为 20 段
+失败与边界：本次真实样本的各批均在总 deadline 内完成，未触发线上 timeout；慢批场景由确定性单测覆盖。单次长会话不计算 P50/P95，不等同 20 分钟稳定性或多语种质量评测
+结论：I-26 已由真实时序失败样例驱动修复；provider 延迟不再让已完成批次无谓丢失，partial/timeout 仍保留实时译文兜底
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和音频前端算法能力。后续 PR 必须补 U-09～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和音频前端算法能力。后续 PR 必须补 U-09～U-12 的可复现证据，再讨论性能优化百分比。
