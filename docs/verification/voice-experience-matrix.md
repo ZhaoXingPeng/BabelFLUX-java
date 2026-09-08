@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.8（2026-09-09）
+版本：v1.9（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -34,6 +34,7 @@
 | U-16 | 跨实例重复启动主连接 | 两个后端实例共享 Redis，两个 WS 客户端复用同一 session token 并发发送 `start_session` | 全局只有一个实时 runner；非 owner 实例得到可理解错误，owner 正常输出字幕和报告 | PASS：8013/8014 实测仅 8013 获得 lease 并输出 2 组字幕；8014 返回“会话已在其他实例中运行” |
 | U-17 | 跨实例重复结束会话 | 两个后端实例共享 MySQL，两个 WS 客户端复用同一 session token 并发发送 `audio_end` | 两端返回同一报告；报告生成、纠偏调用和生命周期事件均不重复 | PASS：修复后 8013/8014 均返回同一 reportId，MySQL outbox `session.finished=1`、`report.generated=1` |
 | U-18 | 跨实例 handoff 字幕投送 | 主 WS 与 handoff WS 连接不同后端实例，主端启动真实会话 | handoff 端收到与主端相同的字幕、状态和 session_report，不出现“已连接但无字幕” | PASS：8013 主端与 8014 handoff 各收到 6 个启动/字幕事件及同一 `session_report` |
+| U-19 | 跨实例启动状态即时可见 | 8013 创建会话并发送带语言/领域覆盖的 `start_session`，立即从 8014 查询历史 | 查询立即显示 `running` 及本次覆盖参数，不需等会话结束 | NOT RUN：等待修复分支部署后的真实双实例回归 |
 
 ## 用户不可见的底层矩阵
 
@@ -56,6 +57,7 @@
 | I-15 | 跨 JVM 报告最终化幂等 | `JdbcSessionRepository.findByIdForUpdate` 在同一事务内锁定 session 行；第二事务读取已持久化 `report_json` 后直接复用 | PASS：H2 两事务并发测试和真实 MySQL 双实例回归均只调用一次生成器、只追加一组生命周期事件 |
 | I-16 | Redis 实时事件 fan-out | `RedisMessageListenerContainer` 订阅 `babelflux:events:session:*`；消息 envelope 携带 publisher，远端只写入本地 bounded history/queue，忽略自身回环 | PASS：真实 8013->Redis 6380->8014 handoff 收到字幕和终态；Pub/Sub 无持久重放、Redis 故障边界已记录 |
 | I-17 | 控制状态 fan-out | `pause_session` / `resume_session` 构造 `source_sync_state`，统一经 `SessionEventHub.publish` 后回发主连接 | PASS：修复前 handoff 只有 ready；修复后真实双实例均收到暂停/恢复状态；handoff 不具备 runner 控制权 |
+| I-18 | 启动快照持久化 | `SessionWebSocketHandler` 在 `session.start()` 后、创建 runner 前调用 `SessionService.saveProgress`；失败时回滚终态 | NOT RUN：已补 JDBC 快照测试与 handler 调用/失败回滚测试，等待真实 MySQL 证据 |
 
 ## 固定测量记录
 
