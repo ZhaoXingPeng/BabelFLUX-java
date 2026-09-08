@@ -25,7 +25,8 @@ protocol in one runtime.
 - DashScope access is isolated behind HTTP and realtime WebSocket clients;
   credentials are read from environment-backed configuration and requests have
   explicit timeouts.
-- The realtime runner owns a bounded one-second PCM queue, maps provider
+- The realtime runner owns a bounded, configurable PCM queue (250 frames/10
+  seconds by default), maps provider
   partial/final events to the existing WebSocket contract, and persists segment
   progress before report generation. Online qwen correction reviews a bounded
   window in a background virtual thread; final qwen correction runs with a

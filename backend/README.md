@@ -114,10 +114,14 @@ The realtime runner maps provider events to the existing
 `transcript_segment`, `translation_segment`, `audio_segment`, and
 `session_report` contract. Source partials are merged as either full snapshots
 or incremental stashes, response IDs bind translations/audio to a segment, and
-the PCM queue drops the oldest frame when its one-second bound is exceeded.
-The runner uses virtual threads and a bounded final drain; it does not claim an
-automatic reconnect policy or a latency improvement without a reproducible
-benchmark.
+the PCM queue defaults to 250 frames (10 seconds at 40 ms/frame), configurable
+with `REALTIME_QUEUE_FRAMES`. When the bound is exceeded the oldest frame is
+dropped with a visible `lagging` event and cumulative frame count; the report
+quality notes also record the approximate lost audio duration. `audio_end`
+drains queued frames before provider finalization instead of evicting audio to
+insert a sentinel. The runner uses virtual threads and a bounded final drain;
+it does not claim an automatic reconnect policy or a latency improvement
+without a reproducible benchmark.
 
 Online correction reviews the latest bounded window in a background task and
 emits `status=revised` plus a `revision_event` only for high-confidence changes.

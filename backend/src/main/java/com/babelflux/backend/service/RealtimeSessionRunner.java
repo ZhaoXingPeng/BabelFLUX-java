@@ -27,7 +27,6 @@ import org.springframework.stereotype.Service;
 /** Runs one bounded PCM stream and translates provider events into the client contract. */
 @Service
 public class RealtimeSessionRunner {
-    private static final int PCM_QUEUE_FRAMES = 25; // 1 second at 40 ms/frame.
     private static final Duration PROVIDER_POLL = Duration.ofMillis(5);
     private static final Duration FINAL_DRAIN = Duration.ofSeconds(8);
     private static final Duration CLOCK_EMIT_INTERVAL = Duration.ofMillis(250);
@@ -76,9 +75,11 @@ public class RealtimeSessionRunner {
     public final class RunHandle {
         private final Session session;
         private final Sink sink;
-        private final ArrayBlockingQueue<AudioFrame> audio = new ArrayBlockingQueue<>(PCM_QUEUE_FRAMES);
+        private final ArrayBlockingQueue<AudioFrame> audio = new ArrayBlockingQueue<>(
+                properties.getRealtimeQueueFrames());
         private final AtomicBoolean ended = new AtomicBoolean();
         private final AtomicBoolean stopRequested = new AtomicBoolean();
+        private final AtomicBoolean inputCompleted = new AtomicBoolean();
         private final AtomicLong elapsedMs = new AtomicLong();
         private final AtomicLong clientPlaybackMs = new AtomicLong(-1);
         private final AtomicLong clientSentAudioMs = new AtomicLong(-1);
@@ -101,20 +102,13 @@ public class RealtimeSessionRunner {
 
         public void acceptAudio(byte[] pcm) {
             if (ended.get() || pcm == null || pcm.length == 0) return;
-            AudioFrame frame = new AudioFrame(pcm, false);
-            if (!audio.offer(frame)) {
-                audio.poll();
-                audio.offer(frame);
-                emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
-                        "status", "lagging", "lagMs", queuedLagMs(),
-                        "message", "音频输入超过 1 秒缓冲，已丢弃最旧帧")));
-            }
+            AudioFrame frame = new AudioFrame(pcm);
+            offerAudio(frame, "音频输入");
         }
 
         public void endAudio() {
             if (ended.get()) return;
             stopRequested.set(true);
-            while (!audio.offer(new AudioFrame(new byte[0], true))) audio.poll();
         }
 
         public void stop() { endAudio(); }
@@ -182,12 +176,10 @@ public class RealtimeSessionRunner {
                     if (!paused || stopRequested.get()) {
                         AudioFrame frame = audio.poll(20, TimeUnit.MILLISECONDS);
                         if (frame != null) {
-                            if (frame.end()) {
-                                finished = true;
-                            } else {
-                                provider.sendAudio(frame.pcm());
-                                elapsedMs.addAndGet(frameDurationMs(frame.pcm()));
-                            }
+                            provider.sendAudio(frame.pcm());
+                            elapsedMs.addAndGet(frameDurationMs(frame.pcm()));
+                        } else if (stopRequested.get() || inputCompleted.get()) {
+                            finished = true;
                         }
                     } else {
                         Thread.sleep(10);
@@ -248,18 +240,26 @@ public class RealtimeSessionRunner {
 
         private void enqueueAudio(byte[] pcm) {
             if (pcm == null || pcm.length == 0 || ended.get()) return;
-            AudioFrame frame = new AudioFrame(pcm, false);
-            if (!audio.offer(frame)) {
-                audio.poll();
-                audio.offer(frame);
-                emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
-                        "status", "lagging", "lagMs", queuedLagMs(),
-                        "message", "媒体输入超过 1 秒缓冲，已丢弃最旧帧")));
-            }
+            offerAudio(new AudioFrame(pcm), "媒体输入");
         }
 
         private void offerAudioEnd() {
-            while (!audio.offer(new AudioFrame(new byte[0], true))) audio.poll();
+            inputCompleted.set(true);
+        }
+
+        private void offerAudio(AudioFrame frame, String source) {
+            if (audio.offer(frame)) return;
+            AudioFrame discarded = audio.poll();
+            if (discarded != null) {
+                long durationMs = frameDurationMs(discarded.pcm());
+                session.recordDroppedInput(durationMs);
+            }
+            audio.offer(frame);
+            emitQuietly(Map.of("type", "source_sync_state", "state", Map.of(
+                    "status", "lagging", "lagMs", queuedLagMs(),
+                    "droppedFrames", session.getDroppedInputFrames(),
+                    "message", source + "超过 " + properties.getRealtimeQueueFrames() * 40
+                            + " ms 缓冲，已丢弃最旧帧")));
         }
 
         private long queuedLagMs() { return audio.size() * (long) MediaPcmSource.FRAME_MS; }
@@ -505,7 +505,7 @@ public class RealtimeSessionRunner {
     private static String value(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
-    private record AudioFrame(byte[] pcm, boolean end) {}
+    private record AudioFrame(byte[] pcm) {}
     private static final class SegmentState {
         private final String id;
         private final long startMs;

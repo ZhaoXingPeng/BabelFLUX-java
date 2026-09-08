@@ -279,6 +279,7 @@ class RealtimeSessionRunnerTest {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");
         properties.setBaseUrl("https://dashscope.aliyuncs.com/api/v1");
+        properties.setRealtimeQueueFrames(25);
         SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
                 mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
         Session session = Session.create("lag-run", "lag", "en", "zh", "通用", "默认",
@@ -322,6 +323,44 @@ class RealtimeSessionRunnerTest {
             return Long.valueOf(1_000L).equals(state.get("lagMs"));
         }));
         assertTrue(events.stream().anyMatch(event -> "session_report".equals(event.get("type"))));
+        assertTrue(session.getDroppedInputFrames() > 0);
+        assertTrue(session.getReport().qualityNotes().contains("实时输入曾丢弃"));
+        runner.shutdown();
+    }
+
+    @Test
+    void endAudioDrainsQueuedFramesBeforeFinalizing() throws Exception {
+        InMemorySessionRepository repository = new InMemorySessionRepository();
+        DashScopeProperties properties = new DashScopeProperties();
+        properties.setApiKey("test-key");
+        properties.setRealtimeQueueFrames(25);
+        SessionService service = new SessionService(repository, new SessionReportService(), new BabelFluxProperties(),
+                mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
+        Session session = Session.create("drain-run", "drain", "en", "zh", "通用", "默认",
+                "quick", "live", "microphone", null, "idle", false, List.of());
+        repository.save(session);
+
+        DashScopeRealtimeClient realtime = mock(DashScopeRealtimeClient.class);
+        DashScopeRealtimeClient.LiveSession provider = mock(DashScopeRealtimeClient.LiveSession.class);
+        when(realtime.connect(any())).thenReturn(provider);
+        AtomicBoolean finished = new AtomicBoolean();
+        AtomicInteger sent = new AtomicInteger();
+        org.mockito.Mockito.doAnswer(invocation -> { sent.incrementAndGet(); return null; })
+                .when(provider).sendAudio(any());
+        when(provider.receive(any(Duration.class))).thenAnswer(invocation -> finished.get()
+                ? new DashScopeRealtimeClient.NormalizedEvent("session_finished", "", new byte[0], null, null, Map.of())
+                : null);
+        org.mockito.Mockito.doAnswer(invocation -> { finished.set(true); return null; }).when(provider).finish();
+
+        RealtimeSessionRunner runner = new RealtimeSessionRunner(realtime, properties, service);
+        RealtimeSessionRunner.RunHandle handle = runner.start(session, event -> { });
+        for (int i = 0; i < 10; i++) handle.acceptAudio(new byte[1_280]);
+        handle.endAudio();
+        handle.await(Duration.ofSeconds(3));
+
+        assertEquals(10, sent.get());
+        assertEquals(0, session.getDroppedInputFrames());
+        assertTrue(!session.getReport().qualityNotes().contains("实时输入曾丢弃"));
         runner.shutdown();
     }
 
