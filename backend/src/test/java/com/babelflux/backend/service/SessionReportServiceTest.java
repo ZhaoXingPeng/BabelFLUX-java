@@ -28,4 +28,20 @@ class SessionReportServiceTest {
 
         assertEquals(60_000, reports.generate(session).durationMs());
     }
+
+    @Test
+    void exposesDroppedInputInReportQualityNotes() {
+        Instant created = Instant.parse("2026-01-01T00:00:00Z");
+        Session session = Session.restore("loss", created, created.plusSeconds(5), "ended", "loss",
+                "en", "zh", "通用", "默认", "quick", "microphone", "audio",
+                List.of(new Session.Segment("seg-1", "hello", "你好", 0, 2000, "final")), null);
+        session.recordDroppedInput(80);
+        session.recordDroppedInput(40);
+
+        var report = reports.generate(session);
+
+        assertEquals(2, session.getDroppedInputFrames());
+        org.junit.jupiter.api.Assertions.assertTrue(report.qualityNotes().contains("实时输入曾丢弃 2 帧"));
+        org.junit.jupiter.api.Assertions.assertTrue(report.qualityNotes().contains("120 ms"));
+    }
 }

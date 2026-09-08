@@ -58,3 +58,4 @@ babelflux:
     final-correction-timeout: ${FINAL_CORRECTION_TIMEOUT_SECONDS:30s}
     realtime-revision-window-segments: ${REALTIME_REVISION_WINDOW_SEGMENTS:4}
     realtime-revision-max-per-minute: ${REALTIME_REVISION_MAX_PER_MINUTE:6}
+    realtime-queue-frames: ${REALTIME_QUEUE_FRAMES:250}

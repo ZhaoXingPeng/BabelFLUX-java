@@ -22,6 +22,11 @@ public class Session {
     private volatile boolean ttsEnabled;
     private final List<GlossaryTerm> glossary = new CopyOnWriteArrayList<>();
     private volatile SessionReport report;
+    /** Runtime-only input loss telemetry; included in the final report quality notes. */
+    private final java.util.concurrent.atomic.AtomicLong droppedInputFrames =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong droppedInputMs =
+            new java.util.concurrent.atomic.AtomicLong();
     private final List<Segment> segments = new CopyOnWriteArrayList<>();
     private final List<Revision> revisions = new CopyOnWriteArrayList<>();
 
@@ -105,6 +110,8 @@ public class Session {
     public boolean isTtsEnabled() { return ttsEnabled; }
     public List<GlossaryTerm> getGlossary() { return List.copyOf(glossary); }
     public SessionReport getReport() { return report; }
+    public long getDroppedInputFrames() { return droppedInputFrames.get(); }
+    public long getDroppedInputMs() { return droppedInputMs.get(); }
     public List<Segment> getSegments() { return List.copyOf(segments); }
     public List<Revision> getRevisions() { return List.copyOf(revisions); }
 
@@ -142,6 +149,11 @@ public class Session {
         segments.add(segment);
     }
     public void addRevision(Revision revision) { if (revision != null) revisions.add(revision); }
+
+    public void recordDroppedInput(long durationMs) {
+        droppedInputFrames.incrementAndGet();
+        droppedInputMs.addAndGet(Math.max(0L, durationMs));
+    }
 
     public record GlossaryTerm(String sourceTerm, String targetTerm, int priority, String note) {}
 

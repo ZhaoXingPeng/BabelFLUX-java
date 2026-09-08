@@ -51,6 +51,11 @@ public class SessionReportService {
                 ? "本场无有效转写内容。"
                 : "本场共 " + segmentCount + " 句，已完成实时转写与翻译。";
         String qualityNotes = value(result.qualityNotes(), result.error());
+        if (session.getDroppedInputFrames() > 0) {
+            String inputLoss = "实时输入曾丢弃 " + session.getDroppedInputFrames() + " 帧（约 "
+                    + session.getDroppedInputMs() + " ms），报告可能缺少部分原声；请检查网络或增大 REALTIME_QUEUE_FRAMES。";
+            qualityNotes = qualityNotes.isBlank() ? inputLoss : qualityNotes + " " + inputLoss;
+        }
         if (qualityNotes.isBlank()) qualityNotes = "completed".equals(result.status())
                 ? "会后完整纠偏已完成。" : "报告使用实时译文生成。";
         String summary = value(result.summary(), fallbackSummary);
