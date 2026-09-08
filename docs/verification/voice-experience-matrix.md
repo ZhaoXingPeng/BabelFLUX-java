@@ -167,7 +167,7 @@ ASR：将上述 TTS PCM 原样上传 /api/models/asr/transcriptions?model=fun-as
       model=qwen3-asr-flash-realtime、audioFormat=pcm、sampleRate=24000。
 修复前：百炼返回 code=ModelNotFound 和明确消息，但 API 固定映射为 HTTP 502；客户端会将可纠正的模型参数错误误认为瞬时网关故障并可能重试。
 修复：ApiExceptionHandler 对 code=ModelNotFound 返回 HTTP 422，保留 message/code/requestId；其他 provider 上游失败仍返回 HTTP 502。
-验证：新增 ApiExceptionHandlerTest；后端重启后对同一真实请求应返回 422 + ModelNotFound，不输出 API key 或音频。
+验证：新增 ApiExceptionHandlerTest；后端重启后对同一真实请求实际返回 422 + ModelNotFound，不输出 API key 或音频。
 边界：仅处理已实测的 ModelNotFound；超时、无 key、非法 PCM、provider 5xx、断网和重试 UI 仍需逐项做真实矩阵验证。
 ```
 
