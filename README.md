@@ -2,7 +2,7 @@
 
 ## DEMO
 
-[![BabelFlux Java 同传演示](docs/design/babelflux-java-demo-cover.png)](https://www.bilibili.com/video/BV1cjEh6BEyu/)
+[![BabelFlux Java 同传演示](docs/design/babelflux-java-demo-cover.jpg)](https://www.bilibili.com/video/BV1cjEh6BEyu/)
 
 [点击观看 BabelFlux / 巴别流同传演示视频](https://www.bilibili.com/video/BV1cjEh6BEyu/)
 
@@ -10,7 +10,7 @@
 
 ---
 
-![BabelFlux Java / 巴别流同传仓库主图](docs/design/babelflux-java-demo-cover.png)
+![BabelFlux Java / 巴别流同传仓库主图](docs/design/babelflux-java-demo-cover.jpg)
 
 > BabelFlux / 巴别流 同传把英语等外语的**单向音频流**实时翻译成中文，以**双语字幕 / 语音**呈现，并能在传译过程中**自动纠正**已经输出的识别/翻译错误。面向演讲、技术分享、国际会议与网课等「跟不上、听不懂、来不及记」的场景。
 >
@@ -61,7 +61,7 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 三端 + 一条真实模型链路，所有服务可同机部署（演示环境为 Windows 单机）。
 
-![BabelFlux Java / 巴别流同传系统架构](docs/design/babelflux-java-architecture.png)
+![BabelFlux Java / 巴别流同传系统架构](docs/design/babelflux-java-architecture.jpg)
 
 ### 模型链路与选型
 
