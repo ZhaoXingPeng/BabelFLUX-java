@@ -522,7 +522,7 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 机器/CPU/内存/JDK：Windows 11 x64；Intel i5-12600KF；16 GB；JDK 21.0.12.1
 根因实验：MySQL 8.0.43 3307 的默认 timestamp 列将 current_timestamp(6) 的 `07:45:47.904583` 保存为 `07:45:48`，同一连接立即比较 `x <= current_timestamp(6)` 返回 false；H2 同样存在精度进位，独立 10000 次探针有 4808 次相等时间未命中
 修复：新增 `JdbcTemporal`，对 scheduler 的当前/due 时间按整秒截断，对 lease_until、未来 next_attempt_at 向上取整，对已到期 next_attempt_at 保持向下取整；Rabbit session outbox 和 ES report index job 共用同一规则，避免 claim 偶发失败或提前领取未来任务
-测试：`JdbcTemporalTest` + `JdbcReportIndexJobStoreTest` + `JdbcSessionEventOutboxTest` 定向 8/8；重复执行两类 job store 10 轮均通过；后端全量 114 通过、0 失败、4 个外部集成测试按默认配置跳过
+测试：`JdbcTemporalTest` + `JdbcReportIndexJobStoreTest` + `JdbcSessionEventOutboxTest` 定向 8/8；重复执行两类 job store 10 轮均通过；后端全量 116 通过、0 失败、4 个外部集成测试按默认配置跳过
 真实中间件结果：session `f8161d27-d3f7-4d86-a708-46bf10297e28` 通过 8013 创建 demo 报告；MySQL `status=ended`、`segments_json=2`、report_json 非空，outbox `session.created/session.finished/report.generated` 各 1；报告 index status=`indexed`、attempts=0、last_error=null；ES `babelflux-reports-v1` 按 reportId 读取成功
 用户可见结果：报告生成后索引状态稳定进入 indexed，不再因首次调度 timestamp 进位出现“报告已生成但搜索任务未领取”的偶发延迟
 失败与边界：当前 schema 使用整秒 timestamp，未来若迁移到 timestamp(3/6) 仍需同步更新归一化策略和迁移测试；本轮未宣称多节点 ES/Rabbit HA 或时钟漂移容错
