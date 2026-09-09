@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.18（2026-09-09）
+版本：v1.19（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -69,6 +69,7 @@
 | I-24 | provider 事件乱序快照 | `translation_final` 可能先于 `source_final`；后到的完整原文必须刷新同一持久化 segment，并保留既有 `revised` 状态 | PASS：修复前 session `6f1b13e3-0106-4d92-a59f-6cfb241e01dc` 报告原文落后于 WS final；PR #78（commit `647290e`）后 session `97445ce4-dbbc-452b-b1bd-26a6190972f0` 5/5 段 WS/REST/MySQL 一致，outbox `created/finished/generated` 各 1 |
 | I-25 | 长会话纠偏分批与候选完整性 | `FinalCorrectionService` 按 `FINAL_CORRECTION_BATCH_SIZE` 分批并行调用；长度比例、LCS 和源文 token 证据共同保护候选 | PASS：PR #83 commit `d595ac9`；默认每批 8 句，真实 20 句拆为 3 批并汇总 20 个 `finalById`/20 条 final revision；MySQL `segments_json=20`、报告非空；单测 6/6 覆盖分批、缺段回退、无依据删减拒绝和源文支持专名纠错 |
 | I-26 | 纠偏批次完成顺序与总 deadline | 长会话批次通过 `ExecutorCompletionService` 按完成顺序消费；慢批不得掩盖 deadline 内已完成批次 | PASS：PR #86 commit `31e8565`；旧实现测试实际返回 `timeout` 且丢失后两批，修复后回归保留 2 个已完成批次并将慢批记为 timeout；真实 session `22e0a25e-c4df-4fe6-bad2-249fc4fe5c71` 20/20 报告段、`correctionStatus=completed`、`correctionElapsedMs=13960` |
+| I-27 | JDBC scheduler timestamp 精度 | MySQL/H2 的默认 `timestamp` 列按整秒保存；当前时间/due 时间向下取整，未来 lease/backoff 截止时间向上取整，避免 claim 偶发失败或提前领取 | PASS：Issue #85 修复 `JdbcTemporal` 并覆盖两类 job store；修复前 MySQL `07:45:47.904583` 写入 `07:45:48` 导致立即 claim=false，H2 独立 10000 次探针出现 4808 次未命中；修复后索引 job/outbox 定向 8/8、重复 10 轮均通过，真实 ES report status=indexed、attempts=0 |
 
 ## 固定测量记录
 
@@ -514,6 +515,20 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：I-26 已由真实时序失败样例驱动修复；provider 延迟不再让已完成批次无谓丢失，partial/timeout 仍保留实时译文兜底
 ```
 
+### 2026-09-09 JDBC scheduler timestamp 精度真实回归（Issue #85）
+
+```text
+提交：fix/jdbc-timestamp-precision（待 PR）
+机器/CPU/内存/JDK：Windows 11 x64；Intel i5-12600KF；16 GB；JDK 21.0.12.1
+根因实验：MySQL 8.0.43 3307 的默认 timestamp 列将 current_timestamp(6) 的 `07:45:47.904583` 保存为 `07:45:48`，同一连接立即比较 `x <= current_timestamp(6)` 返回 false；H2 同样存在精度进位，独立 10000 次探针有 4808 次相等时间未命中
+修复：新增 `JdbcTemporal`，对 scheduler 的当前/due 时间按整秒截断，对 lease_until、未来 next_attempt_at 向上取整，对已到期 next_attempt_at 保持向下取整；Rabbit session outbox 和 ES report index job 共用同一规则，避免 claim 偶发失败或提前领取未来任务
+测试：`JdbcTemporalTest` + `JdbcReportIndexJobStoreTest` + `JdbcSessionEventOutboxTest` 定向 8/8；重复执行两类 job store 10 轮均通过；后端全量 114 通过、0 失败、4 个外部集成测试按默认配置跳过
+真实中间件结果：session `f8161d27-d3f7-4d86-a708-46bf10297e28` 通过 8013 创建 demo 报告；MySQL `status=ended`、`segments_json=2`、report_json 非空，outbox `session.created/session.finished/report.generated` 各 1；报告 index status=`indexed`、attempts=0、last_error=null；ES `babelflux-reports-v1` 按 reportId 读取成功
+用户可见结果：报告生成后索引状态稳定进入 indexed，不再因首次调度 timestamp 进位出现“报告已生成但搜索任务未领取”的偶发延迟
+失败与边界：当前 schema 使用整秒 timestamp，未来若迁移到 timestamp(3/6) 仍需同步更新归一化策略和迁移测试；本轮未宣称多节点 ES/Rabbit HA 或时钟漂移容错
+结论：I-27 已用 MySQL/H2 精度失败样例驱动修复，并在真实 MySQL、RabbitMQ、Elasticsearch 链路验证 claim、报告索引和搜索数据一致
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和音频前端算法能力。后续 PR 必须补 U-09～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护 + JDBC scheduler timestamp 精度一致性”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和音频前端算法能力。后续 PR 必须补 U-09～U-12 的可复现证据，再讨论性能优化百分比。

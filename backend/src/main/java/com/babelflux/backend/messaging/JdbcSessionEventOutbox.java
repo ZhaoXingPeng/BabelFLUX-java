@@ -1,5 +1,6 @@
 package com.babelflux.backend.messaging;
 
+import com.babelflux.backend.infrastructure.JdbcTemporal;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
@@ -23,7 +24,7 @@ public class JdbcSessionEventOutbox {
 
     public void append(SessionEvent event) {
         try {
-            Timestamp now = Timestamp.from(Instant.now());
+            Timestamp now = JdbcTemporal.now();
             jdbc.update("insert into babelflux_session_event_outbox "
                             + "(event_id, event_type, schema_version, session_id, occurred_at, payload, status, attempts, next_attempt_at) "
                             + "values (?, ?, ?, ?, ?, ?, 'pending', 0, ?)",
@@ -35,7 +36,7 @@ public class JdbcSessionEventOutbox {
     }
 
     public List<PendingEvent> pending(int limit) {
-        Timestamp now = Timestamp.from(Instant.now());
+        Timestamp now = JdbcTemporal.now();
         return jdbc.query("select event_id, event_type, session_id, payload, attempts "
                         + "from babelflux_session_event_outbox where "
                         + "(status='pending' and next_attempt_at <= ?) "
@@ -49,27 +50,28 @@ public class JdbcSessionEventOutbox {
      * concurrent relays mutually exclusive while allowing expired leases to recover.
      */
     public boolean tryClaim(String eventId, String owner, Instant leaseUntil) {
-        Timestamp now = Timestamp.from(Instant.now());
+        Timestamp now = JdbcTemporal.now();
         return jdbc.update("update babelflux_session_event_outbox set status='processing', lease_owner=?, lease_until=? "
                         + "where event_id=? and ((status='pending' and next_attempt_at <= ?) "
                         + "or (status='processing' and lease_until is not null and lease_until <= ?))",
-                owner, Timestamp.from(leaseUntil), eventId, now, now) == 1;
+                owner, JdbcTemporal.future(leaseUntil), eventId, now, now) == 1;
     }
 
     public void markPublished(String eventId, String owner) {
         jdbc.update("update babelflux_session_event_outbox set status='published', published_at=?, "
                 + "last_error=null, lease_owner=null, lease_until=null where event_id=? "
                 + "and status='processing' and lease_owner=?",
-                Timestamp.from(Instant.now()), eventId, owner);
+                JdbcTemporal.now(), eventId, owner);
     }
 
     public void markFailed(String eventId, String owner, Instant nextAttemptAt, String error) {
         String detail = error == null || error.isBlank() ? "unknown event delivery failure" : error;
         if (detail.length() > 1000) detail = detail.substring(0, 1000);
+        Instant reference = Instant.now();
         jdbc.update("update babelflux_session_event_outbox set status='pending', attempts=attempts+1, "
                         + "next_attempt_at=?, last_error=?, lease_owner=null, lease_until=null "
                         + "where event_id=? and status='processing' and lease_owner=?",
-                Timestamp.from(nextAttemptAt), detail, eventId, owner);
+                JdbcTemporal.dueAt(nextAttemptAt, reference), detail, eventId, owner);
     }
 
     private PendingEvent map(ResultSet row, int ignored) throws SQLException {
