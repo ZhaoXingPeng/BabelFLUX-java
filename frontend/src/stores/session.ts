@@ -1568,7 +1568,8 @@ export const useSessionStore = defineStore("session", {
         void ttsPlayback.enqueue({
           segmentId: event.segmentId,
           audioBase64: event.audioBase64,
-          sampleRate: event.sampleRate
+          sampleRate: event.sampleRate,
+          segmentSequence: event.segmentSequence
         });
         return;
       }

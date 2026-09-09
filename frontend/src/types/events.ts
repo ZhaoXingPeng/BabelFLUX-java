@@ -34,6 +34,8 @@ export interface AudioSegmentEvent {
   segmentId: string;
   audioBase64: string;
   sampleRate: number;
+  /** Monotonic per-session speech generation used to reject interrupted late audio. */
+  segmentSequence?: number;
 }
 
 export type ServerEvent =
