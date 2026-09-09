@@ -1,147 +1,25 @@
-开发与提交规范
-版本：v0.1
+开发与提交规范（兼容入口）
+版本：v1.1
 
-一、开发节奏
-1. 保持持续提交，不在最后一天一次性导入全部代码。
-2. 每个功能使用独立分支开发，通过 PR 合并。
-3. 主分支 main 合并后应保持可运行或可审阅状态。
-4. 大功能拆成多个小 PR，降低评审和回滚成本。
+本文件保留旧路径，现行规范请以以下文件为准：
+1. ../standards/README.md：规范总索引、证据等级、STAR 回帖与最近工作确认。
+2. ../../CONTRIBUTING.md：GitHub Issue、分支、Gitmoji commit、PR、合并与安全规则。
+3. ../standards/architecture.md：分层、依赖方向、事件契约和长文件拆分。
+4. ../standards/java-backend.md：Java 21、Spring Boot、并发、provider 和测试约束。
+5. star-performance-template.md：性能、缺陷和真实联调的实验记录模板。
 
-二、分支命名建议
-1. feat/功能名：新增功能。
-2. fix/问题名：修复缺陷。
-3. docs/文档名：文档调整。
-4. chore/任务名：工程配置、依赖、初始化等非业务改动。
+当前平台是 GitHub，远端仓库为 ZhaoXingPeng/BabelFLUX-java；不要再按历史版本中的
+Gitee API、GITEE_TOKEN 或旧路径操作。代码推送使用本机 SSH key，Issue/PR 描述和评论
+默认使用中文，禁止提交 API key、token、Cookie、私钥、原始音频或真实用户隐私。
 
-三、提交信息建议
-1. feat: 新增某功能
-示例：feat: 新增音频会话入口
+最小工作流：
+1. 从最新 main 创建 feat/fix/refactor/docs/test/chore 分支。
+2. 先建立 Issue，再提交单一可验证结果；标题使用：<gitemoji> <type>(<scope>): 中文摘要。
+3. 运行与变更范围匹配的测试；真实百炼、设备和 MySQL/Redis/RabbitMQ/Elasticsearch
+   实验必须记录环境、输入、session/report ID、指标、失败样例和不可外推边界。
+4. PR 描述和评论使用“实验 / 结果 / 结论”或 STAR；性能提供 P50/P95/P99，缺陷提供
+   回归测试及修复前后行为。
+5. 通过审查后使用 rebase-and-merge；禁止改写共享 main，合并后删除远端临时分支。
 
-2. fix: 修复某问题
-示例：fix: 修复字幕状态更新问题
-
-3. docs: 补充某文档
-示例：docs: 补充 PR 提交与合并流程
-
-4. chore: 完成某工程任务
-示例：chore: 初始化项目配置
-
-四、PR 标题建议
-格式：类型: 一句话说明新增或修改内容
-
-示例：
-1. feat: 新增音频会话入口
-2. feat: 新增实时字幕展示
-3. fix: 修复实时字幕修正状态更新
-4. docs: 补充 PR 提交与合并流程
-
-五、PR 描述必须包含
-1. 功能描述：说明该功能的作用与使用方式。
-2. 实现思路：说明技术选型或核心实现逻辑。
-3. 测试方式：说明如何验证功能正常运行。
-
-六、注意事项
-1. PR 描述不能空白，也不能与实际变更严重不符。
-2. 第三方库或框架需要在 README 中列明。
-3. 如果复用过去的代码片段，需要在 PR 描述中注明来源。
-4. 提交时间应保持在项目有效开发周期内。
-
-七、标准 PR 工作流
-1. 同步主分支
-cd /hy-tmp/ai-product-lab
-git checkout main
-git pull --ff-only origin main
-
-2. 新建子分支
-git checkout -b feat/audio-session
-
-也可以按任务类型创建：
-git checkout -b feat/live-subtitle-display
-git checkout -b feat/subtitle-revision
-git checkout -b feat/glossary-management
-git checkout -b docs/update-pr-workflow
-
-3. 在子分支上开发
-确认当前不是 main：
-git status --short --branch
-
-4. 提交修改
-git add .
-git commit -m "feat: 新增音频会话入口"
-
-5. 推送子分支
-git push -u origin feat/audio-session
-
-6. 在 Gitee 创建 PR
-source branch 选择当前子分支。
-target branch 选择 main。
-
-7. 填写 PR 描述
-必须包含功能描述、实现思路、测试方式。
-
-8. 在 Gitee 页面合并 PR
-推荐通过 Gitee 页面完成合并，这样可以留下 PR 记录，便于评审查看持续迭代过程。
-
-9. 合并后同步本地 main
-git checkout main
-git pull --ff-only origin main
-
-10. 删除已合并分支
-git branch -d feat/audio-session
-git push origin --delete feat/audio-session
-
-八、合并方式建议
-1. 普通合并
-保留子分支 commit 记录，适合展示持续开发过程。
-
-2. Squash 合并
-将多个 commit 压成一个，历史更简洁，但 commit 分布会减少。
-
-3. Rebase 合并
-历史线性更强，但操作复杂，新手不优先使用。
-
-本项目建议：
-优先使用 Gitee PR 合并；重要功能保留普通合并；不要直接在 main 上开发大功能。
-
-九、命令行直接合并
-仅在明确需要时使用：
-git checkout main
-git pull --ff-only origin main
-git merge --no-ff 分支名 -m "类型: 合并某功能"
-git push origin main
-
-注意：
-直接合并不会形成 Gitee PR 记录，不利于 PR 数量与质量评审。默认优先使用 Gitee PR。
-
-十、系统发起 PR、用户审查合并流程
-本项目后续采用以下协作方式：
-1. 系统从 main 新建子分支。
-2. 系统在子分支上完成开发或文档修改。
-3. 系统提交 commit。
-4. 系统推送子分支到 Gitee。
-5. 系统通过 Gitee Open API 发起 PR。
-6. 用户在 Gitee 页面检查 PR 标题、描述、变更内容和测试方式。
-7. 用户审查通过后点击合并到 main。
-8. 系统同步本地 main。
-
-十一、GITEE_TOKEN 使用规范
-如需系统通过 Gitee Open API 发起 PR，需要在命令环境中设置临时令牌：
-export GITEE_TOKEN="<临时私人令牌>"
-
-要求：
-1. 真实令牌只放在环境变量中。
-2. 不把令牌写入 README、说明文档、commit 或 PR 描述。
-3. 不把令牌提交到 Git 仓库。
-4. 操作完成后建议吊销临时令牌。
-5. 如果 Gitee 返回“此 Pull Request 未通过设置的审查”，说明仓库要求人工审查，用户需要在 Gitee 页面通过并合并。
-
-十二、评审规则符合性确认
-当前流程符合项目要求中的 PR 和提交规范：
-1. 基于 PR 添加新功能或文档变更。
-2. 每个 PR 只做一件事。
-3. PR 标题用一句话说明新增或修改内容。
-4. PR 描述包含功能描述、实现思路和测试方式。
-5. PR 合并后 main 保持可运行或可审阅状态。
-6. 持续使用分支、commit 和 PR 记录迭代过程，避免最后一次性导入全部代码。
-7. 如引入第三方库，需要在 README 中列明依赖。
-8. 如复用历史代码，需要在 PR 描述中注明来源。
+历史版本的详细内容不再作为操作指南；修改本文件时必须同步检查
+`docs/standards/README.md`、`CONTRIBUTING.md` 和 `.github/pull_request_template.md`。
