@@ -228,14 +228,14 @@ POST /api/models/tts/speech
 ## 测试与验证
 
 ```bash
-cd backend && mvn -B test              # Java 后端单元/契约测试（73 passed，2 Docker IT skipped）
-cd frontend && npx vue-tsc --noEmit    # 前端类型检查
+cd backend && mvn -B test              # Java 后端单元/契约测试（122 passed，4 个外部集成测试按默认配置跳过）
+cd frontend && npm run test -- --run   # 前端 Vitest（56 passed）
+cd frontend && npm run build           # 前端 vue-tsc + Vite 生产构建
 cd desktop && npx vue-tsc --noEmit     # 桌面类型检查
 cd desktop && npm run client:build     # 桌面 release exe，验证 deep link 实际运行包
 ```
 
-Java 后端的真实 provider 探活只验证了 DashScope WebSocket 的静音握手（收到
-`session_ready` / `session_finished`，无错误）；没有据此宣称翻译质量、音频输出或性能提升。
+测试数量以最近一次完整运行结果为准；外部 MySQL、Redis、RabbitMQ、Elasticsearch 和百炼实验不作为每次本地单元测试的默认依赖，必须在验证记录中单独列出版本、地址、输入和边界。
 
 前端重点回归：
 
@@ -257,11 +257,24 @@ Java 迁移当前已验证健康检查、会话/报告 REST、WebSocket PCM 控�
 
 ## 当前状态
 
-BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话、实时 PCM、URL 媒体输入、双层纠偏、报告导出和可选中间件链路；桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。后续可按需扩展：批量文件处理、多目标语种、TTS 回放队列优化和更多模型供应商路由。
+BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话、实时 PCM、URL 媒体输入、双层纠偏、报告导出和可选中间件链路；桌面端 deep-link 当前兼容保留 `lingosync://` 协议，便于已注册客户端平滑升级。当前 `main` 只保留主分支，最近合并的实现和验证记录如下：
+
+| 记录 | 已确认结果 |
+| --- | --- |
+| [PR #95](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/95) 会后纠偏缺段补救 | 缺失分段只在原始 deadline 内定向补救；超时/非法 JSON 保留实时译文；定向测试 10/10，真实百炼 5 句会话和 MySQL/Redis/RabbitMQ/Elasticsearch 闭环已记录 |
+| [PR #94](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/94) ES 索引设置幂等 | 避免每份报告重复更新副本设置，并保留 provider 根因 |
+| [PR #91](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/91) TTS 播放代际 | 新句到达时停止旧音频，迟到旧块不再回放；5 次真实会话已验证序列和错误数 |
+| [PR #87](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/87) JDBC 调度时间精度 | 统一整秒 timestamp 的 claim/lease/backoff 取整规则，真实 MySQL/ES 索引闭环通过 |
+| [PR #98](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/98) 首页规范标题 | 根目录文档、模板和示例配置已统一为中文 Gitmoji 提交语义，旧历史未重写 |
+
+已完成能力不等同于生产级结论：20 分钟长时稳定性、>=5 次同规模性能分位数、浏览器 `bufferedAmount` 背压、扬声器声学测量、多节点中间件 HA 和百炼模型覆盖仍在 [Issue #96](https://github.com/ZhaoXingPeng/BabelFLUX-java/issues/96) 排队，必须用真实启动、真实输入和可审计日志逐项验证。
 
 ## 工程规范入口
 
+- 规范总索引、证据等级和最近工作确认：[`docs/standards/README.md`](docs/standards/README.md)
 - 贡献、Issue、gitemoji commit 与 PR 实验记录：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 分层、依赖方向、事件契约与长文件拆分规则：[`docs/standards/architecture.md`](docs/standards/architecture.md)
+- Java 后端编码、并发和测试约束：[`docs/standards/java-backend.md`](docs/standards/java-backend.md)
+- STAR 实验回帖模板：[`docs/process/star-performance-template.md`](docs/process/star-performance-template.md)
 - 安全与密钥处理：[`SECURITY.md`](SECURITY.md)
 - 自动质量门禁：[`Quality Gates`](.github/workflows/ci.yml)
