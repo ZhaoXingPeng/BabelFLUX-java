@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.20（2026-09-09）
+版本：v1.21（2026-09-09）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -25,7 +25,7 @@
 | U-07 | 多轮连续对话 | 5 轮不同短句 + 20 轮连续 PCM，观察 WS 字幕与最终报告 | 无断线/卡死，轮次顺序和字幕滚动正确 | PASS：最新真实 20 轮 session `81dac17f-aa33-4f7a-a6ed-63ce42368132` 为 20/20 transcript final、20/20 translation final、0 次 `lagging`、0 error、报告 20 段，且会后纠偏 completed；5 轮不同句子 session `97445ce4-dbbc-452b-b1bd-26a6190972f0` 亦 5/5 一致。20 分钟长时稳定性仍由 U-11 单独覆盖 |
 | U-08 | 暂停/恢复 | 主 WS 发送 `pause_session` / `resume_session`，同时观察跨实例 handoff | 主端和 handoff 状态一致，恢复后不重复或跳过明显内容 | PASS：真实 8013/8014 session `5215d44b-5b04-4b28-96e7-6ea3daec5c3a` 两端均收到“会话已暂停/会话已恢复”；MySQL 最终 `ended` 且报告存在 |
 | U-09 | 播放中断 | TTS 播放中输入下一句 | 旧音频停止，新句首包延迟可记录 | PASS：5 次真实 ttsEnabled 会话均收到 `segmentSequence` 1→2、14–15 个音频块、0 WebSocket error；首代音频延迟 P50/P95=1820/1834 ms，第二代=7246/7288 ms；前端单测验证旧 source 停止且迟到旧块丢弃。5 次报告均落库并进入 ES indexed，但会后纠偏均有 1 句缺失并显式标记 `partial`，实时译文保留 |
-| U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | NOT RUN：当前仅有 provider/服务单测 |
+| U-10 | 跨句纠偏 | 包含数字、否定、专有名词和术语表的固定语料 | 修正事件高亮，最终报告保留修订记录 | PASS：2026-09-09 真实百炼 5 句固定语料，5/5 段实时与最终报告均保留；修正 `Greedy`、`KRMQ`、`Babel Flux`、数字/否定和术语格式，纠偏耗时 28,403 ms |
 | U-11 | 长时稳定性 | 20 分钟固定音频或 20 轮会话 | 无内存持续增长、无 WebSocket 重连风暴、报告最终生成 | NOT RUN |
 | U-12 | 故障可理解 | 无 key、provider 超时、非法 PCM、上游 4xx/5xx | 用户收到稳定错误/降级提示，不暴露凭据 | PASS（已覆盖输入/模型选择边界）：非法 PCM 和未允许 TTS 模型均在本地返回 HTTP 400；真实 `ModelNotFound` 为 HTTP 422 + 稳定 code/message；已允许但 provider 不响应的模型仍按握手超时返回 504 |
 | U-13 | PCM 队列溢出反馈 | 真实后端 WS 快速注入 200 个 40 ms/1280 bytes PCM 帧 | 页面收到 lagging 状态且显示实际缓冲时长，随后可结束并拿到报告 | PASS：2026-09-09 后端 8005 + 百炼实时链路收到 172 次 `lagging`，`lagMs` 均为 1000（修复前同场景为 0），1.03 s 收到 `session_report` |
@@ -71,6 +71,7 @@
 | I-26 | 纠偏批次完成顺序与总 deadline | 长会话批次通过 `ExecutorCompletionService` 按完成顺序消费；慢批不得掩盖 deadline 内已完成批次 | PASS：PR #86 commit `31e8565`；旧实现测试实际返回 `timeout` 且丢失后两批，修复后回归保留 2 个已完成批次并将慢批记为 timeout；真实 session `22e0a25e-c4df-4fe6-bad2-249fc4fe5c71` 20/20 报告段、`correctionStatus=completed`、`correctionElapsedMs=13960` |
 | I-27 | JDBC scheduler timestamp 精度 | MySQL/H2 的默认 `timestamp` 列按整秒保存；当前时间/due 时间向下取整，未来 lease/backoff 截止时间向上取整，避免 claim 偶发失败或提前领取 | PASS：Issue #85 修复 `JdbcTemporal` 并覆盖两类 job store；修复前 MySQL `07:45:47.904583` 写入 `07:45:48` 导致立即 claim=false，H2 独立 10000 次探针出现 4808 次未命中；修复后索引 job/outbox 定向 8/8、重复 10 轮均通过，真实 ES report status=indexed、attempts=0 |
 | I-28 | TTS 播放代际与迟到块 | `RealtimeSessionRunner` 为每个语音段下发单调 `segmentSequence`；`useTtsPlayback` 在新序列到达时停止已调度 source，拒绝更旧序列 | PASS：Issue #90 修复后真实 5 次会话序列均为 1→2；前端 `useTtsPlayback.test.ts` 3/3 覆盖同段多 chunk、新段中断、旧段迟到丢弃；后端 `RealtimeSessionRunnerTest` 9/9 覆盖音频代际字段 |
+| I-29 | 会后纠偏缺段补救 | 初次 JSON 缺少 segment 时，只在原始 deadline 内针对缺失 ID 发起一次严格结构化补救；结果按 ID 合并，超时/非法 JSON 保留实时译文 | PASS：`FinalCorrectionServiceTest` 10/10；覆盖缺段补救成功、超时、无效 JSON、总 deadline 和完整性保护；补救调用数与耗时写入质量说明，已完成批次不会被覆盖 |
 
 ## 固定测量记录
 
@@ -547,6 +548,29 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 结论：U-09/I-28 已从“不同句音频无代际、可能串播”收敛为“单调代际中断 + 迟到块保护”；本轮不宣称浏览器真实扬声器声学测量或 20 分钟稳定性完成
 ```
 
+### 2026-09-09 会后纠偏缺段补救真实语料回归（Issue #93）
+
+```text
+提交：fix/voice-final-correction-gap-recovery（工作区，待 PR）
+机器/CPU/内存/JDK：Windows 11 x64；Intel i5-12600KF；16 GB；JDK 21.0.12.1
+前端/后端地址：http://127.0.0.1:5173（Vite HTTP 200）/ 本轮后端 http://127.0.0.1:8023（Tomcat）
+中间件：MySQL 8.0.43 127.0.0.1:3308/babelflux_outbox_it；Redis 6380；RabbitMQ 5673；Elasticsearch 7.17.24 9200
+输入格式：5 句英文固定语料分别经百炼 TTS `qwen3-tts-flash-realtime` 生成 16 kHz mono PCM；每句后追加 2 s 静音，按 40 ms/3200 bytes 通过 LiveTranslate WebSocket 发送
+固定语料：`The API gateway version 2.1 must not restart.`；`Redis latency target is 99.95 percent.`；
+          `RabbitMQ Quorum Queue is enabled, and the Elasticsearch index must not be deleted.`；
+          `BabelFlux uses Java 21 and Spring Boot 3.`；`The timeout is 200 milliseconds, not 2 seconds.`
+真实结果：session `fe6edd74-d37f-4798-b108-0b1955b436fa`；5/5 transcript final、5/5 translation final、报告 5 段；
+          `correctionStatus=completed`、`correctionError=""`、`correctionElapsedMs=28403`；final revisions=5；WS error=0
+用户可见修正：`Greedy` 被模型识别为专名并保留；`KRMQ` 修正为 `RabbitMQ Quorum Queue`；`Babel Flux` 统一为 `BabelFlux`；
+          版本号、99.95%、Java 21、Spring Boot 3、200 ms/not 2 seconds 的数字和否定逻辑均保留
+中间件证据：MySQL `status=ended`、`segments_json=5`、`report_json` 非空；outbox `session.created/session.finished/report.generated` 各 1；
+          ES job `status=indexed`、`attempts=0`、`last_error=null`，按 reportId 读取文档成功
+补救路径验证：本轮百炼完整返回 5 段，未自然触发补救；确定性单测模拟“首响应仅 s1、补救仅 s2”，并覆盖补救超时和无效 JSON，均在总 deadline 内回退实时译文；
+          `FinalCorrectionServiceTest` 10/10，补救调用次数与耗时写入 `qualityNotes`
+失败与边界：本轮未宣称补救线上触发率或质量提升；单次语料不计算 P50/P95，不等同 20 分钟稳定性；模型仍可能返回 ASR 拼写错误，需术语表和人工抽检共同兜底
+结论：U-10 已有真实百炼+前后端+MySQL/Redis/RabbitMQ/Elasticsearch 证据；I-29 由缺段失败样例驱动并以确定性超时/非法响应测试锁定，后续继续观察真实缺段触发样本
+```
+
 ## 当前结论
 
-当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护 + JDBC scheduler timestamp 精度一致性 + TTS 音频代际中断与迟到块保护”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和扬声器声学测量。后续 PR 必须补 U-10～U-12 的可复现证据，再讨论性能优化百分比。
+当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护 + 会后纠偏缺段补救边界 + JDBC scheduler timestamp 精度一致性 + TTS 音频代际中断与迟到块保护”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和扬声器声学测量。U-11/U-12 的剩余边界继续独立记录，不将单次语料结果写成性能提升。
