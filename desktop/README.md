@@ -15,6 +15,8 @@
 - 透明置顶 overlay 复用 `frontend/src/components/workbench/FloatingCaption.vue` 和 `frontend/src/styles/main.css`，避免样式分叉。
 - standalone 模式默认选择 `Windows 系统音频`，Windows 下通过 WASAPI loopback 读取默认播放设备的全局音频，转换为 16k/mono/s16le PCM 后复用后端 WebSocket 协议；其他音源仍走浏览器/WebView 授权采集。
 
+桌面端只依赖后端公开的会话、handoff 和 WebSocket 契约，不直接依赖 Java 服务内部实现；协议字段变更必须同步更新前端类型、桌面桥接和契约测试。
+
 ## Run
 
 开发态预览会加载 `http://localhost:5175`，必须同时跑 Vite 与 Tauri：
