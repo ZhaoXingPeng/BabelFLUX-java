@@ -2,32 +2,31 @@
 
 ## DEMO
 
-<iframe
-  src="https://player.bilibili.com/player.html?bvid=BV1cjEh6BEyu&page=1&autoplay=0"
-  width="960"
-  height="540"
-  scrolling="no"
-  border="0"
-  frameborder="no"
-  framespacing="0"
-  allowfullscreen="true"
-></iframe>
+[![BabelFlux Java 同传演示](docs/design/babelflux-java-demo-cover.png)](https://www.bilibili.com/video/BV1cjEh6BEyu/)
 
-<a href="https://www.bilibili.com/video/BV1cjEh6BEyu/">
-  <strong>点击观看 BabelFlux / 巴别流 同传演示视频</strong>
-</a>
-
-https://www.bilibili.com/video/BV1cjEh6BEyu/
+[点击观看 BabelFlux / 巴别流同传演示视频](https://www.bilibili.com/video/BV1cjEh6BEyu/)
 
 </div>
 
 ---
 
-![BabelFlux / 巴别流 同传仓库主图](docs/design/babelflux-logo.png)
+![BabelFlux Java / 巴别流同传仓库主图](docs/design/babelflux-java-demo-cover.png)
 
 > BabelFlux / 巴别流 同传把英语等外语的**单向音频流**实时翻译成中文，以**双语字幕 / 语音**呈现，并能在传译过程中**自动纠正**已经输出的识别/翻译错误。面向演讲、技术分享、国际会议与网课等「跟不上、听不懂、来不及记」的场景。
 >
 > 黑客松选题二的完整实现：BabelFlux Web 工作台 + 巴别流 同传桌面悬浮窗 + Spring Boot 后端 + 阿里云百炼真实模型链路。
+
+---
+
+## About
+
+BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课程的实时语音同传工作台。系统把英语等外语的单向音频流转换为可阅读、可回看、可导出的中文双语字幕，并在说话过程中持续发现术语、数字、否定和跨句语义错误；会话结束后再用完整上下文生成统一术语、修订记录和摘要。
+
+项目的用户体验目标是“听得懂、跟得上、留得住”：用户可以从麦克风、系统音频、浏览器标签页、本地媒体或受限 URL 选择输入，在 Web 工作台实时查看原文/译文和纠偏高亮，也可以把同一会话投送到 Tauri 桌面悬浮窗；结束后在报告历史中查看状态、下载 TXT/SRT/Markdown/JSON，并在模型或网络异常时仍获得可用的实时译文报告。
+
+底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，MySQL 保存会话事实源，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
+
+实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 122 passed（4 个外部集成默认跳过），前端测试为 56/56，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。
 
 ---
 
@@ -62,7 +61,7 @@ https://www.bilibili.com/video/BV1cjEh6BEyu/
 
 三端 + 一条真实模型链路，所有服务可同机部署（演示环境为 Windows 单机）。
 
-![BabelFlux / 巴别流 同传系统架构](docs/design/babelflux-architecture.png)
+![BabelFlux Java / 巴别流同传系统架构](docs/design/babelflux-java-architecture.png)
 
 ### 模型链路与选型
 
