@@ -74,4 +74,38 @@ describe("createTtsPlayback", () => {
 
     expect(sources[0].stop).toHaveBeenCalled();
   });
+
+  it("interrupts old speech for a newer segment and rejects late audio from the old segment", async () => {
+    const playback = createTtsPlayback();
+
+    await playback.enqueue({
+      segmentId: "seg-1",
+      segmentSequence: 1,
+      audioBase64: "AQIDBA==",
+      sampleRate: 24000
+    });
+    await playback.enqueue({
+      segmentId: "seg-1",
+      segmentSequence: 1,
+      audioBase64: "AQIDBA==",
+      sampleRate: 24000
+    });
+    await playback.enqueue({
+      segmentId: "seg-2",
+      segmentSequence: 2,
+      audioBase64: "AQIDBA==",
+      sampleRate: 24000
+    });
+    await playback.enqueue({
+      segmentId: "seg-1",
+      segmentSequence: 1,
+      audioBase64: "AQIDBA==",
+      sampleRate: 24000
+    });
+
+    expect(sources).toHaveLength(3);
+    expect(sources[0].stop).toHaveBeenCalledTimes(1);
+    expect(sources[1].stop).toHaveBeenCalledTimes(1);
+    expect(sources[2].start).toHaveBeenCalledWith(0);
+  });
 });

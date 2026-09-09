@@ -150,7 +150,7 @@ public class RealtimeSessionRunner {
         }
 
         private void demoSegment(String id, String source, String translation, long start, long end) throws Exception {
-            SegmentState state = new SegmentState(id, start);
+            SegmentState state = new SegmentState(id, start, ++segmentNumber);
             state.source = source;
             state.translation = translation;
             state.sourceFinal = true;
@@ -301,7 +301,8 @@ public class RealtimeSessionRunner {
         }
 
         private void begin(String itemId) {
-            SegmentState state = new SegmentState(session.getId() + "-seg-" + (++segmentNumber), elapsedMs.get());
+            int sequence = ++segmentNumber;
+            SegmentState state = new SegmentState(session.getId() + "-seg-" + sequence, elapsedMs.get(), sequence);
             state.itemId = itemId;
             roots.add(state);
             byId.put(state.id, state);
@@ -419,7 +420,8 @@ public class RealtimeSessionRunner {
             SegmentState state = event.responseId() == null ? current() : byResponse.get(event.responseId());
             if (state == null || event.audio().length == 0) return;
             emitQuietly(Map.of("type", "audio_segment", "segmentId", state.id,
-                    "audioBase64", Base64.getEncoder().encodeToString(event.audio()), "sampleRate", 24_000));
+                    "audioBase64", Base64.getEncoder().encodeToString(event.audio()), "sampleRate", 24_000,
+                    "segmentSequence", state.sequence));
         }
 
         private void emitSegment(String type, SegmentState state, String language, String text, String status) {
@@ -509,6 +511,7 @@ public class RealtimeSessionRunner {
     private static final class SegmentState {
         private final String id;
         private final long startMs;
+        private final int sequence;
         private long endMs;
         private String source = "";
         private String translation = "";
@@ -516,7 +519,11 @@ public class RealtimeSessionRunner {
         private String responseId;
         private boolean sourceFinal;
         private boolean translationFinal;
-        private SegmentState(String id, long startMs) { this.id = id; this.startMs = startMs; }
+        private SegmentState(String id, long startMs, int sequence) {
+            this.id = id;
+            this.startMs = startMs;
+            this.sequence = sequence;
+        }
     }
 
     public static class DashScopeRealtimeUnavailableException extends RuntimeException {

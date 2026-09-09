@@ -6,6 +6,7 @@ export interface TtsAudioSegment {
   segmentId: string;
   audioBase64: string;
   sampleRate: number;
+  segmentSequence?: number;
 }
 
 const DEFAULT_VOLUME = 0.5;
@@ -36,6 +37,8 @@ export function createTtsPlayback(options: TtsPlaybackOptions = {}) {
   let nextStartTime = 0;
   let muted = false;
   let volume = DEFAULT_VOLUME;
+  let activeSegmentId: string | null = null;
+  let activeSegmentSequence: number | null = null;
   const sources = new Set<AudioBufferSourceNode>();
 
   function getAudioContextCtor(): typeof AudioContext {
@@ -68,6 +71,7 @@ export function createTtsPlayback(options: TtsPlaybackOptions = {}) {
       if (audioContext.state === "suspended") {
         await audioContext.resume();
       }
+      if (!acceptSegment(segment)) return;
       const bytes = base64ToBytes(segment.audioBase64);
       const buffer = pcm16ToAudioBuffer(audioContext, bytes, segment.sampleRate);
       const source = audioContext.createBufferSource();
@@ -102,6 +106,43 @@ export function createTtsPlayback(options: TtsPlaybackOptions = {}) {
   }
 
   function stop() {
+    stopScheduledSources();
+    activeSegmentId = null;
+    activeSegmentSequence = null;
+  }
+
+  /**
+   * A new sentence supersedes queued speech. The backend provides a monotonic
+   * sequence, so audio chunks from an interrupted sentence cannot resume later.
+   */
+  function acceptSegment(segment: TtsAudioSegment) {
+    const sequence = segment.segmentSequence;
+    if (Number.isInteger(sequence) && sequence! >= 0) {
+      if (activeSegmentSequence !== null) {
+        if (sequence! < activeSegmentSequence) return false;
+        if (sequence! > activeSegmentSequence) stopScheduledSources();
+        if (sequence === activeSegmentSequence && segment.segmentId !== activeSegmentId) return false;
+      } else if (activeSegmentId !== null && activeSegmentId !== segment.segmentId) {
+        stopScheduledSources();
+      }
+      activeSegmentSequence = sequence!;
+      activeSegmentId = segment.segmentId;
+      return true;
+    }
+
+    // During a rolling deployment, do not let a legacy event without a
+    // sequence interrupt a newer sequenced generation.
+    if (activeSegmentSequence !== null && segment.segmentId !== activeSegmentId) return false;
+
+    // Older backends do not include segmentSequence. Keep their behavior safe
+    // by treating a new segmentId as a new generation.
+    if (activeSegmentId !== null && activeSegmentId !== segment.segmentId) stopScheduledSources();
+    activeSegmentId = segment.segmentId;
+    activeSegmentSequence = null;
+    return true;
+  }
+
+  function stopScheduledSources() {
     for (const source of sources) {
       try {
         source.stop();
