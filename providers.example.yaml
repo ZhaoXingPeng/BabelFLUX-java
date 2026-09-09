@@ -1,3 +1,5 @@
+# Java Spring Boot 后端的 provider 示例。默认使用本地 mock；真实百炼调用只读取环境变量中的密钥。
+# 端点和模型名称应以账号实际可用性验证为准，不能把示例配置当作能力证明。
 default_provider: mock
 
 providers:

@@ -37,11 +37,11 @@ Issue 和 PR 的标题、描述及评论默认使用中文，便于项目协作�
 示例：
 
 ```text
-✨ feat(web): add session history filters
-🐛 fix(pipeline): keep partial subtitles monotonic
-♻️ refactor(backend): extract source text normalization
-🧪 test(pipeline): cover CJK overlap boundaries
-🚀 ci: run backend and frontend quality gates
+✨ feat(web): 增加会话历史筛选
+🐛 fix(pipeline): 保持部分字幕单调
+♻️ refactor(backend): 提取原文规范化逻辑
+🧪 test(pipeline): 覆盖中日韩文本边界
+🚀 ci: 执行前后端质量门禁
 ```
 
 不要在 commit、Issue、PR 或日志中写入 API key、token、Cookie、私钥或真实用户数据。
