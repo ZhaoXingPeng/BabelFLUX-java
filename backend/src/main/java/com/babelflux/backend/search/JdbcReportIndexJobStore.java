@@ -1,5 +1,6 @@
 package com.babelflux.backend.search;
 
+import com.babelflux.backend.infrastructure.JdbcTemporal;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
@@ -29,7 +30,7 @@ public class JdbcReportIndexJobStore {
         } catch (JsonProcessingException error) {
             throw new IllegalStateException("report index document cannot be serialized", error);
         }
-        Timestamp now = Timestamp.from(Instant.now());
+        Timestamp now = JdbcTemporal.now();
         int updated = jdbc.update("update babelflux_report_index_jobs set payload=?, status='pending', attempts=0, "
                         + "next_attempt_at=?, last_error=null, lease_owner=null, lease_until=null, "
                         + "updated_at=? where report_id=?",
@@ -49,7 +50,7 @@ public class JdbcReportIndexJobStore {
     }
 
     public List<PendingJob> pending(int limit) {
-        Timestamp now = Timestamp.from(Instant.now());
+        Timestamp now = JdbcTemporal.now();
         return jdbc.query("select report_id, payload, attempts from babelflux_report_index_jobs "
                         + "where (status='pending' and next_attempt_at <= ?) "
                         + "or (status='processing' and lease_until is not null and lease_until <= ?) "
@@ -58,11 +59,11 @@ public class JdbcReportIndexJobStore {
 
     /** Claims one job so concurrent indexers do not write the same report normally. */
     public boolean tryClaim(String reportId, String owner, Instant leaseUntil) {
-        Timestamp now = Timestamp.from(Instant.now());
+        Timestamp now = JdbcTemporal.now();
         return jdbc.update("update babelflux_report_index_jobs set status='processing', lease_owner=?, lease_until=? "
                         + "where report_id=? and ((status='pending' and next_attempt_at <= ?) "
                         + "or (status='processing' and lease_until is not null and lease_until <= ?))",
-                owner, Timestamp.from(leaseUntil), reportId, now, now) == 1;
+                owner, JdbcTemporal.future(leaseUntil), reportId, now, now) == 1;
     }
 
     public Optional<JobStatus> status(String reportId) {
@@ -75,16 +76,17 @@ public class JdbcReportIndexJobStore {
         jdbc.update("update babelflux_report_index_jobs set status='indexed', updated_at=?, "
                 + "last_error=null, lease_owner=null, lease_until=null where report_id=? "
                 + "and status='processing' and lease_owner=?",
-                Timestamp.from(Instant.now()), reportId, owner);
+                JdbcTemporal.now(), reportId, owner);
     }
 
     public void markFailed(String reportId, String owner, Instant nextAttemptAt, String error) {
         String detail = error == null ? "unknown indexing failure" : error;
         if (detail.length() > 1000) detail = detail.substring(0, 1000);
+        Instant reference = Instant.now();
         jdbc.update("update babelflux_report_index_jobs set status='pending', attempts=attempts+1, next_attempt_at=?, "
                         + "last_error=?, lease_owner=null, lease_until=null, updated_at=? "
-                        + "where report_id=? and status='processing' and lease_owner=?", Timestamp.from(nextAttemptAt), detail,
-                Timestamp.from(Instant.now()), reportId, owner);
+                        + "where report_id=? and status='processing' and lease_owner=?",
+                JdbcTemporal.dueAt(nextAttemptAt, reference), detail, JdbcTemporal.from(reference), reportId, owner);
     }
 
     private PendingJob map(ResultSet row, int ignored) throws SQLException {
