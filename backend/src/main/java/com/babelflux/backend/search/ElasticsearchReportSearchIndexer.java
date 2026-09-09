@@ -55,6 +55,8 @@ public class ElasticsearchReportSearchIndexer implements ReportSearchIndexer, Re
     private final ObjectMapper mapper;
     private final ElasticsearchClient client;
     private final int indexReplicas;
+    private final Object settingsLock = new Object();
+    private volatile boolean replicaSettingsReady;
 
     @Autowired
     public ElasticsearchReportSearchIndexer(ElasticsearchOperations operations, ObjectMapper mapper,
@@ -143,10 +145,24 @@ public class ElasticsearchReportSearchIndexer implements ReportSearchIndexer, Re
         if (!index.exists()) {
             index.create(Map.of("number_of_replicas", Integer.toString(indexReplicas)));
             index.putMapping(Document.parse(MAPPING));
+            replicaSettingsReady = true;
         } else if (client != null || operations instanceof ElasticsearchTemplate) {
+            ensureReplicaSettings();
+        }
+    }
+
+    /**
+     * Replica settings are deployment state, not per-document state. Applying
+     * them once avoids an avoidable write and keeps a read-only ES failure from
+     * multiplying on every report indexing attempt.
+     */
+    private void ensureReplicaSettings() {
+        if (replicaSettingsReady) return;
+        synchronized (settingsLock) {
+            if (replicaSettingsReady) return;
+            PutIndicesSettingsRequest request = new PutIndicesSettingsRequest.Builder().index(INDEX)
+                    .settings(settings -> settings.numberOfReplicas(Integer.toString(indexReplicas))).build();
             try {
-                PutIndicesSettingsRequest request = new PutIndicesSettingsRequest.Builder().index(INDEX)
-                        .settings(settings -> settings.numberOfReplicas(Integer.toString(indexReplicas))).build();
                 if (client != null) {
                     client.indices().putSettings(request);
                 } else {
@@ -155,9 +171,24 @@ public class ElasticsearchReportSearchIndexer implements ReportSearchIndexer, Re
                         return null;
                     });
                 }
+                replicaSettingsReady = true;
             } catch (IOException error) {
-                throw new IllegalStateException("Elasticsearch index settings could not be updated", error);
+                throw new IllegalStateException("Elasticsearch index settings update failed: "
+                        + describe(error), error);
             }
         }
+    }
+
+    private static String describe(Throwable error) {
+        StringBuilder detail = new StringBuilder();
+        Throwable current = error;
+        while (current != null) {
+            if (detail.length() > 0) detail.append("; cause: ");
+            detail.append(current.getClass().getSimpleName());
+            if (current.getMessage() != null && !current.getMessage().isBlank())
+                detail.append(": ").append(current.getMessage());
+            current = current.getCause();
+        }
+        return detail.toString();
     }
 }

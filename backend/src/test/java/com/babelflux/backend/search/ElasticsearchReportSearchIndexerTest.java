@@ -1,7 +1,9 @@
 package com.babelflux.backend.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,6 +12,7 @@ import co.elastic.clients.elasticsearch.indices.ElasticsearchIndicesClient;
 import co.elastic.clients.elasticsearch.indices.PutIndicesSettingsRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -71,6 +74,49 @@ class ElasticsearchReportSearchIndexerTest {
         verify(indices).putSettings(request.capture());
         assertEquals(List.of(ElasticsearchReportSearchIndexer.INDEX), request.getValue().index());
         assertEquals("0", request.getValue().settings().numberOfReplicas());
+    }
+
+    @Test
+    void appliesReplicaSettingsOnlyOncePerIndexerInstance() throws Exception {
+        ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
+        IndexOperations index = mock(IndexOperations.class);
+        ElasticsearchClient client = mock(ElasticsearchClient.class);
+        ElasticsearchIndicesClient indices = mock(ElasticsearchIndicesClient.class);
+        when(operations.indexOps(org.springframework.data.elasticsearch.core.mapping.IndexCoordinates.of(
+                ElasticsearchReportSearchIndexer.INDEX))).thenReturn(index);
+        when(index.exists()).thenReturn(true);
+        when(client.indices()).thenReturn(indices);
+        ElasticsearchReportSearchIndexer search = new ElasticsearchReportSearchIndexer(operations, new ObjectMapper(), 0,
+                client);
+
+        search.index("report-1", Map.of("searchText", "first"));
+        search.index("report-2", Map.of("searchText", "second"));
+
+        verify(indices).putSettings(org.mockito.ArgumentMatchers.any(PutIndicesSettingsRequest.class));
+        verify(operations, org.mockito.Mockito.times(2)).index(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void preservesRootCauseWhenReplicaSettingsAreRejected() throws Exception {
+        ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
+        IndexOperations index = mock(IndexOperations.class);
+        ElasticsearchClient client = mock(ElasticsearchClient.class);
+        ElasticsearchIndicesClient indices = mock(ElasticsearchIndicesClient.class);
+        when(operations.indexOps(org.springframework.data.elasticsearch.core.mapping.IndexCoordinates.of(
+                ElasticsearchReportSearchIndexer.INDEX))).thenReturn(index);
+        when(index.exists()).thenReturn(true);
+        when(client.indices()).thenReturn(indices);
+        doThrow(new IOException("cluster_block_exception: index read-only allow-delete block"))
+                .when(indices).putSettings(org.mockito.ArgumentMatchers.any(PutIndicesSettingsRequest.class));
+        ElasticsearchReportSearchIndexer search = new ElasticsearchReportSearchIndexer(operations, new ObjectMapper(), 0,
+                client);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> search.index("report-blocked", Map.of("searchText", "blocked")));
+
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("cluster_block_exception"));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("read-only"));
     }
 
     @Test
