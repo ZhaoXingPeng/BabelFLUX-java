@@ -18,4 +18,37 @@
 
 ## 验证记录
 
-部署过程中的实验、结果、结论和未解决问题以关联 PR 评论为准；本文只在部署完成后补充最终命令、端口和回滚说明。
+部署过程中的实验、结果、结论和未解决问题以关联 PR 评论为准；本文保留最终命令、端口和回滚说明。
+
+### 已执行发布
+
+- 发布版本：`e680787`
+- 发布目录：`/opt/babelflux/releases/e680787`
+- 当前指针：`/opt/babelflux/current`
+- 后端：`babelflux.service`，`127.0.0.1:8000`
+- 前端：Nginx `:80`，`babelflux.icu` / `www.babelflux.icu`
+- 配置：`/etc/babelflux/babelflux.env`、`/etc/systemd/system/babelflux.service`、`/etc/nginx/sites-available/babelflux`
+
+### 实测结果
+
+- `systemctl is-active babelflux nginx`：均为 `active`
+- 服务器本机带 Host `www.babelflux.icu` 请求 `/`：HTTP 200，返回前端 `index.html`
+- 服务器本机带 Host `www.babelflux.icu` 请求 `/api/health`：`{"status":"ok"}`
+- 服务器本机 POST `/api/sessions`（`inputMode=demo`）：返回 `sessionId`、`wsToken` 和 `status=created`
+- DNS：`www.babelflux.icu A 111.170.33.3`，TTL 600 秒，已启用
+
+### 已知边界
+
+- 服务器首次 `apt` 访问 Ubuntu 官方 HTTP 源超时，切换到 `https://mirrors.aliyun.com/ubuntu` 后安装成功；该镜像源变更属于服务器运维状态，不写入应用配置。
+- 首次上传普通 Maven JAR 导致 `no main manifest attribute`；重新执行 `mvn clean package -DskipTests` 生成 Spring Boot repackage JAR 后恢复。
+- 公网 HTTP 请求当前被上游 Apache 备案拦截页接管，HTTPS 端口未监听；服务器本机 Nginx 路由正常。需要完成备案/入口绑定后再做公网验收。
+- 服务器未配置 `DASHSCOPE_API_KEY`、MySQL、Redis、RabbitMQ 或 Elasticsearch，因此本次只验证 H2/内存 + demo API，不宣称真实语音和生产中间件已上线。
+
+### 回滚
+
+```bash
+systemctl stop babelflux
+ln -sfn /opt/babelflux/releases/<previous-version> /opt/babelflux/current
+systemctl start babelflux
+nginx -t && systemctl reload nginx
+```
