@@ -58,7 +58,7 @@ mvn -B test
 ```
 
 The current suite covers health/session history, one-time handoff issue/claim,
-JDBC and Redis state boundaries, Rabbit outbox delivery semantics, ES search
+MyBatis and Redis state boundaries, Rabbit outbox delivery semantics, ES search
 contracts, realtime provider normalization, bounded runner behavior, and
 WebSocket authentication/audio control. Docker-backed RabbitMQ and Elasticsearch checks are
 explicitly opt-in with `RUN_RABBITMQ_IT=true` and
@@ -66,7 +66,10 @@ explicitly opt-in with `RUN_RABBITMQ_IT=true` and
 
 The outbox persistence/recovery path also has an opt-in real MySQL check. Point
 it only at an isolated database with the application schema already applied;
-the test creates and removes one uniquely named event row.
+the test creates and removes one uniquely named event row. Follow the
+[isolated MySQL integration-test runbook](../docs/verification/mysql-isolated-integration-test.md)
+before configuring a database or account. In particular, do not reuse the
+production application account and do not run a global `REVOKE ALL` command.
 
 ```bash
 RUN_MYSQL_IT=true \
