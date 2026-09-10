@@ -1,5 +1,8 @@
 # ADR 016：使用 JDBC 元数据执行可移植的增量 schema 迁移
 
+> 状态：已废弃。2026-09-10 起由 [ADR 017](017-flyway-versioned-schema-migrations.md) 取代。
+> 本文保留此前 JDBC 补列方案的历史背景，不能作为当前部署或 schema 演进指南。
+
 ## 背景
 
 项目原先在 `schema.sql` 中使用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 为 outbox lease 增量升级。该语法在 H2 可执行，但 MySQL 8.0.43 会在应用上下文初始化阶段报语法错误，导致启用 `MYSQL_ENABLED=true` 时服务无法启动。

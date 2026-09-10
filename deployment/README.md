@@ -18,16 +18,43 @@ named volumes 保存数据。实际密码、API key 与证书私钥不属于本�
 ## 首次部署顺序
 
 1. 在服务器安装 Docker Engine、Docker Compose plugin、OpenJDK 21、Nginx、Certbot 与 ffmpeg。
-2. 复制 `docker-compose.yml` 到 `/opt/babelflux/infrastructure/`，在同目录创建权限为 `0600` 的
-   `.env`，填入随机的 MySQL/RabbitMQ 密码，执行 `docker compose up -d`。
+2. 复制 `docker-compose.yml` 和 `mysql-init/` 到 `/opt/babelflux/infrastructure/`，在同目录创建权限为
+   `0600` 的 `.env`。用 `openssl rand -hex 32` 分别生成 MySQL root、application、migrator 和
+   RabbitMQ 密码，再执行 `docker compose up -d`。新 MySQL volume 首次初始化会创建：
+   `babelflux_app`（仅 `SELECT/INSERT/UPDATE/DELETE`）和 `babelflux_migrator`（仅用于 Flyway DDL）。
 3. 上传生产构建产物至新的 `/opt/babelflux/releases/<version>/`，再原子更新
    `/opt/babelflux/current` 符号链接。
-4. 创建 `/etc/babelflux/babelflux.env`（权限 `0600`），启用 MySQL、Redis、RabbitMQ 和
-   Elasticsearch，并提供百炼环境变量；安装 `babelflux.service` 后执行 `systemctl enable --now babelflux`。
+4. 创建 `/etc/babelflux/babelflux.env`（权限 `0600`），以 `babelflux_app` 填写 `MYSQL_USERNAME`/
+   `MYSQL_PASSWORD`，以 `babelflux_migrator` 填写 `FLYWAY_USERNAME`/`FLYWAY_PASSWORD`，再启用
+   MySQL、Redis、RabbitMQ 和 Elasticsearch，并提供百炼环境变量；安装 `babelflux.service` 后执行
+   `systemctl enable --now babelflux`。
 5. 先安装 `nginx/babelflux.http.conf`，通过 webroot 方式签发两个域名的证书，再切换为
    `nginx/babelflux.conf` 并 reload Nginx。
 6. 逐项验证服务状态、本机监听范围、MySQL schema、Redis、RabbitMQ、Elasticsearch、`
    /api/health`、会话创建、Nginx WebSocket 升级和外部 HTTPS。
+
+## Flyway 首发、恢复与回滚
+
+- 新库默认执行 `V1__initial_schema.sql`。已有 schema 的首次转换前，先在受限位置完成备份，并将
+  `/etc/babelflux/babelflux.env` 的 `FLYWAY_BASELINE_ON_MIGRATE=true` 仅用于该次启动。健康检查成功且
+  `flyway_schema_history` 已记录 version `1` 后，改回 `false` 并重启一次，防止未来意外对非空库基线化。
+- 对已有 Docker volume，初始化脚本不会自动重跑。由 root 在确认 `.env` 中三组 MySQL 密码均为
+  `openssl rand -hex 32` 格式后执行：
+
+  ```bash
+  cd /opt/babelflux/infrastructure
+  docker compose exec -T mysql sh /docker-entrypoint-initdb.d/01-app-users.sh
+  ```
+
+  该脚本只在 `babelflux.*` 上创建/更新 `babelflux_app` 与 `babelflux_migrator` 的权限，不执行全局
+  `REVOKE`。切换运行时账号并通过 `/api/health`、会话创建和 MySQL 连通性验证后，再由受限运维账户
+  处理不再使用的旧应用账号；不要在迁移期间删除仍被运行中服务使用的账号。
+- 每次 schema 变更先在隔离 MySQL 上运行
+  `scripts/verify-mysql-flyway-backup-restore.ps1`。它会验证迁移账号 DDL、应用账号 DML/拒绝 DDL、
+  备份与恢复后的数据及 `flyway_schema_history`。该脚本仅创建临时容器和随机 schema，不可替代生产
+  恢复时间目标或跨主机灾备演练。
+- 迁移失败采用 forward-fix 或从已验证备份恢复到隔离实例后再决定处理方式；禁止修改已发布的 Flyway
+  migration 文件，也不要直接删除 `flyway_schema_history`。
 
 ## 百炼端点配置
 
