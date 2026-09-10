@@ -1,0 +1,27 @@
+[Unit]
+Description=BabelFlux Java backend
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=babelflux
+Group=babelflux
+WorkingDirectory=/opt/babelflux/current/backend
+EnvironmentFile=/etc/babelflux/babelflux.env
+ExecStart=/usr/bin/java -Xms256m -Xmx640m -jar /opt/babelflux/current/backend/babelflux-backend.jar
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+LimitNOFILE=65536
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/babelflux
+
+[Install]
+WantedBy=multi-user.target
