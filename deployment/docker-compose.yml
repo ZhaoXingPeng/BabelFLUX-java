@@ -7,13 +7,14 @@ services:
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
     environment:
       MYSQL_DATABASE: babelflux
-      MYSQL_USER: babelflux
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deployment/.env}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in deployment/.env}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in deployment/.env}
+      MYSQL_MIGRATOR_PASSWORD: ${MYSQL_MIGRATOR_PASSWORD:?Set MYSQL_MIGRATOR_PASSWORD in deployment/.env}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s

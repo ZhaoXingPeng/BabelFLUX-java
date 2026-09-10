@@ -92,8 +92,8 @@ Redis 会话租约、明确的丢帧提示、超时和报告回退管理流式�
 
 当前关系型业务持久化已由 [`MyBatisSessionRepository`](../../backend/src/main/java/com/babelflux/backend/infrastructure/MyBatisSessionRepository.java)
 和 `infrastructure.mybatis` Mapper 实现。会话快照、outbox、消费回执、审计和索引任务都经显式 SQL Mapper
-访问 MySQL。JDBC 只保留在 [`JdbcSchemaMigration`](../../backend/src/main/java/com/babelflux/backend/infrastructure/JdbcSchemaMigration.java)
-这类启动期 schema 元数据/DDL 基础设施职责。
+访问 MySQL。schema 演进由 [`Flyway V1`](../../backend/src/main/resources/db/migration/V1__initial_schema.sql)
+管理；JDBC starter 仅保留连接池和 Flyway 等基础设施依赖，不再执行启动期 DDL 或业务 CRUD。
 
 结论如下：
 
@@ -102,13 +102,13 @@ Redis 会话租约、明确的丢帧提示、超时和报告回退管理流式�
 | Spring JDBC 作为主要 CRUD 持久层 | **已退出。** | 业务 SQL 边界已迁移到 MyBatis，继续维护两套业务实现没有收益。 |
 | MyBatis 作为当前主力 | **保留。** | 显式 SQL 适合 `FOR UPDATE`、lease 条件更新、outbox 状态机和 JSON 快照映射；能在面试中说明 SQL 与事务语义。 |
 | 追加 MyBatis-Plus | **暂不引入。** | 核心查询并非简单通用 CRUD；叠加 ORM 风格 API 会增加学习/配置面，不能消除自定义锁、租约和 outbox SQL。只有大量独立后台 CRUD 出现且重复 Mapper 被量化后，才单独评估。 |
-| `schema.sql` + 启动期补列作为长期迁移机制 | **需要替换。** | 缺少版本序列、迁移审核、迁移账号边界和恢复演练。#120 评估 Flyway/等价方案并迁移。 |
+| `schema.sql` + 启动期补列作为长期迁移机制 | **已替换为 Flyway。** | 版本化 V1、显式 baseline、独立迁移账号和隔离备份恢复脚本见 ADR 017；不得将隔离演练外推为生产灾备。 |
 
 ### 中间件与交付
 
 | 组件 | 现状与证据 | 结论与边界 |
 | --- | --- | --- |
-| MySQL | `utf8mb4`、单 schema、MyBatis Mapper、事务 outbox；部署模板将端口绑到回环 | **可用的单机事实源。** 需要 #120 的版本化迁移、最小权限和恢复演练；无主从/跨机容灾。 |
+| MySQL | `utf8mb4`、单 schema、MyBatis Mapper、事务 outbox、Flyway V1；部署模板将端口绑到回环 | **可用的单机事实源。** 应用/迁移账号分离并有隔离恢复演练；无主从/跨机容灾。 |
 | Redis | token/handoff TTL、会话 runner lease、原子 Lua；Docker 开启 AOF 且仅回环监听 | **保留。** Redis 异常返回显式错误；单实例、无认证依赖回环隔离，不适合跨主机/不可信本机进程的威胁模型。 |
 | RabbitMQ | durable exchange/queue/DLQ、outbox relay 指数退避、receipt 去重；管理端口只回环 | **保留。** 消费语义为至少一次；尚无 live broker 压力或故障恢复演练。 |
 | Elasticsearch | MySQL 可重建投影、任务 lease/重试；单节点内存上限与 384 MiB heap 已配置 | **保留且限定。** 仅单节点搜索能力；关闭安全特性在仅回环的单机演示中可接受，跨主机部署前必须重新做认证/TLS/网络隔离设计。 |
@@ -120,7 +120,6 @@ Redis 会话租约、明确的丢帧提示、超时和报告回退管理流式�
 
 | 优先级 | 缺口 | 风险 | 行动 |
 | --- | --- | --- | --- |
-| P1 | schema 演进和恢复没有版本化/演练证据 | 升级无法可靠解释，应用账号可能承担 DDL 权限 | #120：版本化迁移、账号分离、隔离恢复演练。 |
 | P1 | 没有统一的脱敏结构化日志、业务指标、告警阈值 | 出现 outbox/索引/依赖异常时只能人工翻日志 | #122：定义指标、关联 ID、敏感字段禁止项和单机抓取方式。 |
 | P2 | 真 MySQL、RabbitMQ、ES 集成测试默认不在 CI | 依赖升级/配置漂移可能晚发现 | 在 #120/#122 后评估 Testcontainers 或专用隔离环境，不共享生产账号。 |
 | P2 | 单机中间件全部共宿主 | 单机故障同时影响应用与状态服务 | 明确保留为当前成本边界；出现可用性目标后再独立设计 HA，不提前微服务化。 |

@@ -65,8 +65,8 @@ explicitly opt-in with `RUN_RABBITMQ_IT=true` and
 `RUN_ELASTICSEARCH_IT=true`.
 
 The outbox persistence/recovery path also has an opt-in real MySQL check. Point
-it only at an isolated database with the application schema already applied;
-the test creates and removes one uniquely named event row. Follow the
+it only at an isolated database after applying the Flyway migrations; the test
+creates and removes one uniquely named event row. Follow the
 [isolated MySQL integration-test runbook](../docs/verification/mysql-isolated-integration-test.md)
 before configuring a database or account. In particular, do not reuse the
 production application account and do not run a global `REVOKE ALL` command.
@@ -144,7 +144,7 @@ malformed, failed, or unconfigured calls fall back to the live translation
 while preserving a visible correction status.
 
 Redis, RabbitMQ and Elasticsearch are disabled by default so a clean checkout
-is runnable without external services. `MYSQL_ENABLED=true` selects the JDBC
+is runnable without external services. `MYSQL_ENABLED=true` selects the MyBatis
 session repository (the default remains in-memory/H2); it persists session
 metadata, segment JSON, and report snapshots. With `REDIS_ENABLED=true`,
 handoff and WebSocket ticket state is stored with TTL and handoff claims use
@@ -179,7 +179,12 @@ continues to read the MySQL snapshot.
 API keys are read only from environment variables. Never commit `.env` or a
 real `DASHSCOPE_API_KEY`.
 
-The checked-in `schema.sql` is safe for fresh H2/MySQL databases. Additive
-lease columns for older databases are applied by `JdbcSchemaMigration` using
-JDBC metadata rather than vendor-specific `ADD COLUMN IF NOT EXISTS` syntax;
-this keeps repeated startup idempotent on MySQL 8 as well as H2.
+Schema changes are versioned under `src/main/resources/db/migration/` and run
+through Flyway. A fresh schema applies `V1__initial_schema.sql`; an existing
+schema may be baselined at version 1 only during the controlled first migration
+by setting `FLYWAY_BASELINE_ON_MIGRATE=true`. Keep it `false` otherwise so an
+unexpected nonempty database fails rather than receiving an implicit baseline.
+The application datasource uses `MYSQL_USERNAME`/`MYSQL_PASSWORD`; Flyway may
+use the separate `FLYWAY_USERNAME`/`FLYWAY_PASSWORD` migration account. The
+deployment account, backup, restore and rollback procedure is documented in
+[`deployment/README.md`](../deployment/README.md).

@@ -20,8 +20,8 @@
    outbox 表；schema 初始化由受控的迁移步骤完成，不应让应用测试账号拥有生产 schema 的权限。
 3. 在授权前保存账号当前授权快照，至少记录 `SHOW GRANTS FOR '<test-user>'@'<host>'` 的受限运维
    留档。快照不得提交到仓库或粘贴到公开 PR。
-4. 通过受控启动或 schema 初始化脚本仅初始化测试 schema，使其拥有与测试所需版本一致的
-   `babelflux_session_event_outbox` 表及 lease/错误字段。不要用测试过程改造生产 schema。
+4. 通过 Flyway 将测试 schema 迁移到测试所需版本。不得复制 `schema.sql` 或让应用账号以启动期
+   DDL 初始化 schema；不要用测试过程改造生产 schema。
 5. 在执行 Maven 前打印并人工复核 `TEST_MYSQL_URL` 的主机、端口和数据库名；命令输出中不要带
    密码。连接用户应为专用测试账号。
 
