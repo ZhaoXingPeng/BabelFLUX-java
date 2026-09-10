@@ -9,6 +9,8 @@ named volumes 保存数据。实际密码、API key 与证书私钥不属于本�
 - Nginx 是唯一对公网开放的应用入口：`80` 仅用于 ACME 与 HTTPS 跳转，`443` 提供前端、REST
   API 和 WebSocket。
 - Java 后端只监听 `127.0.0.1:8000`；四个中间件端口也只绑定 `127.0.0.1`。
+- Actuator/Prometheus 端点随 Java 后端仅监听回环地址；Nginx 不得代理 `/actuator/**` 到公网。指标名、
+  结构化日志字段、采样和最小告警见 [`docs/operations/java-backend-observability.md`](../docs/operations/java-backend-observability.md)。
 - `babelflux.service` 以无登录权限的 `babelflux` 用户运行，敏感配置从 root-only
   `/etc/babelflux/babelflux.env` 读取。
 - Elasticsearch 单节点必须将宿主机 `vm.max_map_count` 设为至少 `262144`。

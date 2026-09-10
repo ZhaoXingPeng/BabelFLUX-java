@@ -7,6 +7,7 @@ import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEvent;
 import com.babelflux.backend.messaging.SessionEventFactory;
+import com.babelflux.backend.observability.OperationalMetrics;
 import com.babelflux.backend.search.ReportIndexingPort;
 import com.babelflux.backend.web.dto.CreateSessionRequest;
 import java.util.Comparator;
@@ -18,6 +19,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -30,18 +32,28 @@ public class SessionService {
     private final JdbcSessionEventOutbox outbox;
     private final SessionEventFactory eventFactory;
     private final ReportIndexingPort reportIndexing;
+    private final OperationalMetrics metrics;
     /** Deduplicates concurrent finish calls from stop/disconnect races in this JVM. */
     private final ConcurrentMap<String, CompletableFuture<SessionReport>> finishing = new ConcurrentHashMap<>();
 
+    @Autowired
     public SessionService(SessionRepository repository, SessionReportService reports,
                           BabelFluxProperties properties, JdbcSessionEventOutbox outbox,
-                          SessionEventFactory eventFactory, ReportIndexingPort reportIndexing) {
+                          SessionEventFactory eventFactory, ReportIndexingPort reportIndexing,
+                          OperationalMetrics metrics) {
         this.repository = repository;
         this.reports = reports;
         this.properties = properties;
         this.outbox = outbox;
         this.eventFactory = eventFactory;
         this.reportIndexing = reportIndexing;
+        this.metrics = metrics;
+    }
+
+    public SessionService(SessionRepository repository, SessionReportService reports,
+                          BabelFluxProperties properties, JdbcSessionEventOutbox outbox,
+                          SessionEventFactory eventFactory, ReportIndexingPort reportIndexing) {
+        this(repository, reports, properties, outbox, eventFactory, reportIndexing, OperationalMetrics.NOOP);
     }
 
     @Transactional
@@ -70,6 +82,7 @@ public class SessionService {
                 Boolean.TRUE.equals(request.ttsEnabled()), glossary);
         Session saved = repository.save(session);
         appendEventIfEnabled(eventFactory.created(saved));
+        metrics.sessionLifecycle("created");
         return saved;
     }
 
@@ -113,6 +126,7 @@ public class SessionService {
             reportIndexing.enqueue(report);
             appendEventIfEnabled(eventFactory.finished(target, report));
             appendEventIfEnabled(eventFactory.reportGenerated(target, report));
+            metrics.sessionLifecycle("completed");
             created.complete(report);
             return report;
         } catch (RuntimeException | Error error) {

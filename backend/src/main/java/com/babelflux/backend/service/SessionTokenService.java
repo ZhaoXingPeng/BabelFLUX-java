@@ -1,6 +1,7 @@
 package com.babelflux.backend.service;
 
 import com.babelflux.backend.infrastructure.RedisSessionRepository;
+import com.babelflux.backend.observability.OperationalMetrics;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -22,19 +23,24 @@ public class SessionTokenService {
     private final Map<String, HandoffTicket> handoffs = new ConcurrentHashMap<>();
     private final Map<String, Instant> usedHandoffs = new ConcurrentHashMap<>();
     private final RedisSessionRepository redis;
+    private final OperationalMetrics metrics;
 
-    public SessionTokenService() { this(Clock.systemUTC()); }
+    public SessionTokenService() { this(Clock.systemUTC(), null, OperationalMetrics.NOOP); }
 
     @Autowired
-    public SessionTokenService(ObjectProvider<RedisSessionRepository> redisProvider) {
-        this(Clock.systemUTC(), redisProvider.getIfAvailable());
+    public SessionTokenService(ObjectProvider<RedisSessionRepository> redisProvider,
+                               ObjectProvider<OperationalMetrics> metricsProvider) {
+        this(Clock.systemUTC(), redisProvider.getIfAvailable(), metricsProvider.getIfAvailable());
     }
 
-    SessionTokenService(Clock clock) { this(clock, null); }
+    SessionTokenService(Clock clock) { this(clock, null, OperationalMetrics.NOOP); }
 
-    SessionTokenService(Clock clock, RedisSessionRepository redis) {
+    SessionTokenService(Clock clock, RedisSessionRepository redis) { this(clock, redis, OperationalMetrics.NOOP); }
+
+    SessionTokenService(Clock clock, RedisSessionRepository redis, OperationalMetrics metrics) {
         this.clock = clock;
         this.redis = redis;
+        this.metrics = metrics == null ? OperationalMetrics.NOOP : metrics;
     }
 
     public String issue(String sessionId) {
@@ -45,6 +51,7 @@ public class SessionTokenService {
             if (redis == null) tokens.put(token, ticket);
             else redis.saveWebSocket(ticket, SESSION_TOKEN_TTL);
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
         return token;
@@ -61,6 +68,7 @@ public class SessionTokenService {
             ticket = redis == null ? Optional.ofNullable(token == null ? null : tokens.get(token))
                     : redis.findWebSocket(token);
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
         return ticket.isPresent() && ticket.get().sessionId().equals(sessionId)
@@ -78,6 +86,7 @@ public class SessionTokenService {
             return ticket.isPresent() && ticket.get().expiresAt().isAfter(Instant.now(clock))
                     && "session".equals(ticket.get().purposeOrDefault());
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
     }
@@ -92,6 +101,7 @@ public class SessionTokenService {
             if (redis == null) handoffs.put(token, ticket);
             else redis.saveHandoff(ticket, Duration.ofSeconds(300));
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
         return ticket;
@@ -120,6 +130,7 @@ public class SessionTokenService {
         try {
             result = redis.claimHandoff(token);
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
         return switch (result.status()) {
@@ -147,6 +158,7 @@ public class SessionTokenService {
             if (redis == null) tokens.put(token, ticket);
             else if (!ttl.isNegative() && !ttl.isZero()) redis.saveWebSocket(ticket, ttl);
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             throw new TokenStateUnavailableException(error);
         }
         return token;

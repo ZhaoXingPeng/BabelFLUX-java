@@ -11,8 +11,12 @@ import com.babelflux.backend.provider.dashscope.DashScopeClient.InvalidRequestEx
 import com.babelflux.backend.provider.dashscope.DashScopeClient.TimeoutException;
 import com.babelflux.backend.provider.dashscope.DashScopeClient.UpstreamException;
 import com.babelflux.backend.search.ReportSearchUnavailableException;
+import com.babelflux.backend.observability.OperationalMetrics;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -20,6 +24,18 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
+    private final OperationalMetrics metrics;
+
+    public ApiExceptionHandler() {
+        this(OperationalMetrics.NOOP);
+    }
+
+    @Autowired
+    public ApiExceptionHandler(OperationalMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     @ExceptionHandler(InvalidSessionRequestException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, String> invalidSession(InvalidSessionRequestException error) {
@@ -47,6 +63,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ReportSearchUnavailableException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> reportSearchUnavailable(
             ReportSearchUnavailableException error) {
+        observedFailure("elasticsearch", HttpStatus.SERVICE_UNAVAILABLE.value(), error);
         return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Map.of("detail", error.getMessage()));
     }
@@ -57,12 +74,14 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ConfigurationException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> providerConfiguration(ConfigurationException error) {
+        observedFailure("provider_configuration", HttpStatus.SERVICE_UNAVAILABLE.value(), error);
         return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Map.of("detail", error.getMessage()));
     }
 
     @ExceptionHandler(TimeoutException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> providerTimeout(TimeoutException error) {
+        observedFailure("dashscope_timeout", HttpStatus.GATEWAY_TIMEOUT.value(), error);
         return org.springframework.http.ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
                 .body(Map.of("detail", error.getMessage()));
     }
@@ -73,6 +92,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(UpstreamException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> providerUpstream(UpstreamException error) {
+        observedFailure("dashscope_upstream", providerStatus(error).value(), error);
         Map<String, String> detail = new java.util.LinkedHashMap<>();
         detail.put("message", error.getMessage());
         if (error.getCode() != null) detail.put("code", error.getCode());
@@ -101,7 +121,20 @@ public class ApiExceptionHandler {
     @ExceptionHandler(TokenStateUnavailableException.class)
     public org.springframework.http.ResponseEntity<Map<String, String>> tokenStateUnavailable(
             TokenStateUnavailableException error) {
+        observedFailure("redis", HttpStatus.SERVICE_UNAVAILABLE.value(), error);
         return org.springframework.http.ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Map.of("detail", error.getMessage()));
+    }
+
+    private void observedFailure(String category, int status, RuntimeException error) {
+        metrics.apiFailure(category, status);
+        if (category.startsWith("dashscope")) metrics.dependencyFailure("dashscope");
+        else if ("elasticsearch".equals(category)) metrics.dependencyFailure(category);
+        log.atWarn()
+                .addKeyValue("event", "api.failure")
+                .addKeyValue("category", category)
+                .addKeyValue("status", status)
+                .addKeyValue("error_type", error.getClass().getSimpleName())
+                .log("API request failed");
     }
 }

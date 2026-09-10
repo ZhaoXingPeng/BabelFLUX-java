@@ -3,6 +3,7 @@ package com.babelflux.backend.search;
 import com.babelflux.backend.domain.Session;
 import com.babelflux.backend.domain.SessionReport;
 import com.babelflux.backend.domain.SessionRepository;
+import com.babelflux.backend.observability.OperationalMetrics;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
@@ -10,6 +11,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,14 +25,22 @@ public class ReportIndexingService implements ReportIndexingPort {
     private final ReportSearchIndexer indexer;
     private final SessionRepository sessions;
     private final ObjectMapper mapper;
+    private final OperationalMetrics metrics;
     private final String owner = "indexer-" + UUID.randomUUID();
 
+    @Autowired
     public ReportIndexingService(JdbcReportIndexJobStore jobs, ReportSearchIndexer indexer,
-                                 SessionRepository sessions, ObjectMapper mapper) {
+                                 SessionRepository sessions, ObjectMapper mapper, OperationalMetrics metrics) {
         this.jobs = jobs;
         this.indexer = indexer;
         this.sessions = sessions;
         this.mapper = mapper;
+        this.metrics = metrics;
+    }
+
+    public ReportIndexingService(JdbcReportIndexJobStore jobs, ReportSearchIndexer indexer,
+                                 SessionRepository sessions, ObjectMapper mapper) {
+        this(jobs, indexer, sessions, mapper, OperationalMetrics.NOOP);
     }
 
     @Transactional
@@ -46,11 +56,20 @@ public class ReportIndexingService implements ReportIndexingPort {
             try {
                 indexer.index(job.reportId(), mapper.readValue(job.payload(), new TypeReference<>() {}));
                 jobs.markIndexed(job.reportId(), owner);
+                metrics.asyncSucceeded("elasticsearch", "index");
             } catch (Exception error) {
                 long backoffSeconds = Math.min(300, 1L << Math.min(job.attempts(), 8));
                 jobs.markFailed(job.reportId(), owner, Instant.now().plusSeconds(backoffSeconds), error.getMessage());
-                log.warn("report index failed reportId={} attempt={} nextRetrySeconds={}",
-                        job.reportId(), job.attempts() + 1, backoffSeconds, error);
+                metrics.dependencyFailure("elasticsearch");
+                metrics.asyncRetry("elasticsearch", "index");
+                log.atWarn()
+                        .addKeyValue("event", "async.task.retry")
+                        .addKeyValue("component", "elasticsearch")
+                        .addKeyValue("operation", "index")
+                        .addKeyValue("attempt", job.attempts() + 1)
+                        .addKeyValue("retry_seconds", backoffSeconds)
+                        .addKeyValue("error_type", error.getClass().getSimpleName())
+                        .log("Report index will be retried");
             }
         }
     }
