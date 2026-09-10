@@ -573,4 +573,16 @@ Lease 证据：Redis key `babelflux:lease:runner:{sessionId}` 获取后 PTTL=287
 
 ## 当前结论
 
+### 2026-09-10 生产兼容 HTTP 与实时 WebSocket 端点分离验证（Issue #108）
+
+```text
+部署：Ubuntu 22.04 公网实例，HTTPS/WSS 入口 https://babelflux.icu；新版本目录通过符号链接切换
+配置：HTTP 使用业务空间 OpenAI-compatible 地址；实时连接显式使用 DASHSCOPE_WEBSOCKET_BASE_URL=wss://dashscope.aliyuncs.com/api-ws/v1；密钥仅保存在 0600 服务端环境文件
+代码验证：DashScopeRealtimeClientTest、DashScopeSpeechClientTest，以及 mvn -q test 均通过
+HTTP 探针：POST /api/models/llm/generate，qwen-flash 返回 HTTP 200、非空 content 和 requestId
+实时探针：创建 microphone 会话，经公网 WSS 发送 start_session、6,400 bytes 16 kHz PCM 静音和 audio_end；依次收到 session_started、source_sync_state(syncing)、session_report，未收到 error
+结论：兼容 HTTP 域名不再被错误派生为实时 WebSocket 域名，标准模型调用和真实 LiveTranslate 连接可同时工作
+边界：静音样本只验证认证、连接、会话结束和报告生命周期，不用于声明字幕准确率、首字幕延迟、TTS 质量或长时稳定性
+```
+
 当前已证明“前后端可启动 + 百炼 LLM/TTS/ASR/LiveTranslate 最小闭环 + MySQL/Redis/RabbitMQ/Elasticsearch 真实运行 + Redis lease 跨实例 runner 互斥 + MySQL 跨实例报告最终化幂等 + Redis Pub/Sub handoff 事件 fan-out + 跨实例暂停/恢复状态同步 + provider 乱序 source final 快照一致性 + 默认 10 秒 PCM 缓冲下 20 轮输入完整性 + 长会话会后纠偏分批完整性 + 纠偏批次完成顺序保护 + 会后纠偏缺段补救边界 + JDBC scheduler timestamp 精度一致性 + TTS 音频代际中断与迟到块保护”成立；尚未证明 20 分钟长时间稳定性、重复性能分位数、多节点 RabbitMQ HA、浏览器端发送缓冲和扬声器声学测量。U-11/U-12 的剩余边界继续独立记录，不将单次语料结果写成性能提升。

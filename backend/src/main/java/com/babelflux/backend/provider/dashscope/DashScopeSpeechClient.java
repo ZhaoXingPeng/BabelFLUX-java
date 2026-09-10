@@ -227,6 +227,10 @@ public class DashScopeSpeechClient {
     private String asrUrl() { return websocketBaseUrl() + "/inference"; }
     private String ttsUrl(String model) { return websocketBaseUrl() + "/realtime?model=" + URLEncoder.encode(model, StandardCharsets.UTF_8); }
     private String websocketBaseUrl() {
+        String configured = properties.getWebsocketBaseUrl();
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim().replaceFirst("^http", "ws").replaceFirst("/+$", "");
+        }
         String base = properties.getBaseUrl().replaceFirst("^http", "ws");
         int api = base.indexOf("/api/");
         return (api < 0 ? base : base.substring(0, api)) + "/api-ws/v1";

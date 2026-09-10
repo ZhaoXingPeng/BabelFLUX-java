@@ -153,6 +153,24 @@ class DashScopeSpeechClientTest {
         assertTrue(error.getMessage().contains("unsupported TTS model"));
     }
 
+    @Test
+    void usesExplicitWebsocketBaseUrlInsteadOfCompatibleHttpBaseUrl() {
+        DashScopeProperties properties = properties();
+        properties.setBaseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1");
+        properties.setWebsocketBaseUrl("https://dashscope.aliyuncs.com/api-ws/v1/");
+        FakeConnection connection = new FakeConnection(
+                "{\"type\":\"session.created\",\"session\":{\"id\":\"tts-1\"}}",
+                "{\"type\":\"response.done\"}",
+                "{\"type\":\"session.finished\"}");
+        DashScopeSpeechClient client = new DashScopeSpeechClient(properties, new ObjectMapper(),
+                (url, headers) -> {
+                    assertEquals("wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-tts-flash-realtime", url);
+                    return connection;
+                });
+
+        client.synthesize("hello", "qwen3-tts-flash-realtime", "Cherry", "Auto", "pcm", 24_000, "commit");
+    }
+
     private static DashScopeProperties properties() {
         DashScopeProperties properties = new DashScopeProperties();
         properties.setApiKey("test-key");

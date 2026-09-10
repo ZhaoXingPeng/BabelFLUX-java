@@ -9,6 +9,7 @@ public class DashScopeProperties {
     private String apiKey;
     private String workspaceId;
     private String baseUrl;
+    private String websocketBaseUrl;
     private Duration requestTimeout = Duration.ofSeconds(30);
     private Duration speechHandshakeTimeout = Duration.ofSeconds(5);
     private List<String> allowedTtsModels = List.of("qwen3-tts-flash-realtime");
@@ -34,6 +35,8 @@ public class DashScopeProperties {
     public void setWorkspaceId(String workspaceId) { this.workspaceId = workspaceId; }
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+    public String getWebsocketBaseUrl() { return websocketBaseUrl; }
+    public void setWebsocketBaseUrl(String websocketBaseUrl) { this.websocketBaseUrl = websocketBaseUrl; }
     public Duration getRequestTimeout() { return requestTimeout; }
     public void setRequestTimeout(Duration requestTimeout) { this.requestTimeout = requestTimeout; }
     public Duration getSpeechHandshakeTimeout() { return speechHandshakeTimeout; }

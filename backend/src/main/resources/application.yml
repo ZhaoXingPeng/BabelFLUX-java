@@ -42,6 +42,7 @@ babelflux:
     api-key: ${DASHSCOPE_API_KEY:}
     workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
     base-url: ${DASHSCOPE_HTTP_BASE_URL:https://dashscope.aliyuncs.com/api/v1}
+    websocket-base-url: ${DASHSCOPE_WEBSOCKET_BASE_URL:}
     request-timeout: ${DASHSCOPE_REQUEST_TIMEOUT_SECONDS:30s}
     speech-handshake-timeout: ${DASHSCOPE_SPEECH_HANDSHAKE_TIMEOUT_SECONDS:5s}
     allowed-tts-models: ${DASHSCOPE_ALLOWED_TTS_MODELS:qwen3-tts-flash-realtime}
