@@ -26,7 +26,7 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。业务关系型持久化由 MyBatis 管理，MySQL 保存会话事实、事件 outbox、审计记录和报告索引任务；JDBC 仅保留启动期 schema 元数据/DDL 等基础设施职责。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
 
-实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 122 passed（4 个外部集成默认跳过），前端测试为 56/56，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。
+实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 133 passed（5 个外部集成默认跳过），前端测试为 59/59，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。固定合成 PCM 的五轮背压/超时模拟基线与浏览器发送缓冲阈值见 [`docs/verification/realtime-performance-baseline.md`](docs/verification/realtime-performance-baseline.md)，它不构成真实模型或线上 SLA 结论。
 
 ---
 

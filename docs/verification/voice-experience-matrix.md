@@ -1,6 +1,6 @@
 # BabelFlux 语音系统体验与底层验证矩阵
 
-版本：v1.21（2026-09-09）
+版本：v1.22（2026-09-10）
 
 本矩阵把语音岗位要求转成可复现的项目验收项。岗位调研强调 ASR、TTS、语音翻译、端到端语音交互、流式低延迟、音频前端处理、性能/内存优化和技术测试文档；BabelFlux 当前以后端 PCM 流和百炼适配器为主，不能把尚未实现的降噪、回声消除、麦克风阵列或声源定位写成已完成能力。
 
@@ -72,6 +72,7 @@
 | I-27 | JDBC scheduler timestamp 精度 | MySQL/H2 的默认 `timestamp` 列按整秒保存；当前时间/due 时间向下取整，未来 lease/backoff 截止时间向上取整，避免 claim 偶发失败或提前领取 | PASS：Issue #85 修复 `JdbcTemporal` 并覆盖两类 job store；修复前 MySQL `07:45:47.904583` 写入 `07:45:48` 导致立即 claim=false，H2 独立 10000 次探针出现 4808 次未命中；修复后索引 job/outbox 定向 8/8、重复 10 轮均通过，真实 ES report status=indexed、attempts=0 |
 | I-28 | TTS 播放代际与迟到块 | `RealtimeSessionRunner` 为每个语音段下发单调 `segmentSequence`；`useTtsPlayback` 在新序列到达时停止已调度 source，拒绝更旧序列 | PASS：Issue #90 修复后真实 5 次会话序列均为 1→2；前端 `useTtsPlayback.test.ts` 3/3 覆盖同段多 chunk、新段中断、旧段迟到丢弃；后端 `RealtimeSessionRunnerTest` 9/9 覆盖音频代际字段 |
 | I-29 | 会后纠偏缺段补救 | 初次 JSON 缺少 segment 时，只在原始 deadline 内针对缺失 ID 发起一次严格结构化补救；结果按 ID 合并，超时/非法 JSON 保留实时译文 | PASS：`FinalCorrectionServiceTest` 10/10；覆盖缺段补救成功、超时、无效 JSON、总 deadline 和完整性保护；补救调用数与耗时写入质量说明，已完成批次不会被覆盖 |
+| I-30 | PCM 背压模拟基线 | 固定合成 PCM 以受控 provider 替身重复 5 次，记录首字幕/完成分位数、丢帧率和 timeout 收尾；浏览器 32 KB 发送缓冲会给出显式 lagging/recovered 状态 | PASS（本机模拟，不代表真实 provider）：`RealtimePerformanceBaselineTest` 的 5 次压力输入首字幕 P50/P95/P99=48/53/53 ms、完成=513/521/521 ms、受控丢帧=15/41；超时仍发出 error 与 session_report。方法、边界和浏览器阈值见 `docs/verification/realtime-performance-baseline.md` |
 
 ## 固定测量记录
 
