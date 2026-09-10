@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -238,6 +239,35 @@ class SessionWebSocketHandlerTest {
                 .anyMatch(message -> message.getPayload().contains("translation_segment")));
         org.mockito.Mockito.verifyNoInteractions(runner);
         handler.afterConnectionClosed(socket, CloseStatus.NORMAL);
+    }
+
+    @Test
+    void relaysRunnerEventsToHandoffSubscribersWithoutChangingPrimaryEventContract() throws Exception {
+        SessionEventHub hub = new SessionEventHub();
+        handler = new SessionWebSocketHandler(mapper, sessions, tokens, runner, hub);
+        WebSocketSession primary = socket("ws-1", tokens.issue("ws-1"));
+        var handoff = tokens.issueHandoff("ws-1", null, "en", "zh", "bilingual");
+        WebSocketSession handoffSocket = socket("ws-1", tokens.issueHandoffWebSocket("ws-1", handoff.expiresAt()));
+        when(primary.getId()).thenReturn("primary-relay");
+        when(handoffSocket.getId()).thenReturn("handoff-relay");
+        when(runner.start(any(Session.class), any())).thenReturn(run);
+
+        handler.afterConnectionEstablished(primary);
+        handler.afterConnectionEstablished(handoffSocket);
+        handler.handleTextMessage(primary, new TextMessage("{\"type\":\"start_session\"}"));
+        ArgumentCaptor<RealtimeSessionRunner.Sink> sink = ArgumentCaptor.forClass(RealtimeSessionRunner.Sink.class);
+        verify(runner).start(any(Session.class), sink.capture());
+
+        sink.getValue().emit(Map.of("type", "translation_segment", "segment", Map.of(
+                "segmentId", "relay-1", "text", "已转发", "language", "zh",
+                "startMs", 0, "endMs", 40, "status", "final")));
+
+        var messages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        verify(handoffSocket, timeout(1000).atLeast(2)).sendMessage(messages.capture());
+        assertTrue(messages.getAllValues().stream()
+                .anyMatch(message -> message.getPayload().contains("translation_segment")));
+        handler.afterConnectionClosed(primary, CloseStatus.NORMAL);
+        handler.afterConnectionClosed(handoffSocket, CloseStatus.NORMAL);
     }
 
     @Test

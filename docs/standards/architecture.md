@@ -22,6 +22,23 @@ Infrastructure / provider adapters (infrastructure, messaging, search, provider)
 - `provider`、`infrastructure`、`messaging`、`search` 只能通过稳定端口向应用层提供能力，不能把第三方 SDK 类型泄漏到 API 或前端。
 - `frontend` 和 `desktop` 共享协议类型语义，但不能直接依赖后端实现细节。
 
+## 实时会话边界
+
+Java 实时会话保持单一 WebSocket 契约，但把连接适配、运行编排、租约和投送拆开，避免协议处理类同时管理线程、Redis 和字幕事件。
+
+| 组件 | 唯一职责 | 不负责 |
+| --- | --- | --- |
+| `SessionWebSocketHandler` | 鉴权、JSON/二进制帧校验、命令路由和关闭通知 | session 状态机、Redis 租约、handoff 消费线程、事件序列化细节 |
+| `RealtimeSessionCoordinator` | 启动/停止 `RealtimeSessionRunner`、保存会话启动快照、转发控制命令和结束收尾 | WebSocket 路径、token 或 JSON 解析 |
+| `RunnerLeaseManager` | 单 JVM owner 与可选 Redis runner lease 的获取、续租、释放和失败分类 | 操作 runner、发送 WebSocket 消息或持久化 session |
+| `SessionEventDispatcher` | 先写入 `SessionEventHub`，再将同一事件发送给主 socket；终态完成 replay | 修改 session 或决定租约 |
+| `HandoffSessionSubscriber` | 只读 handoff 的 replay、订阅线程和资源释放 | 启动 runner、控制音频或抢占 lease |
+| `RealtimeSessionRunner` | PCM 有界队列、provider 驱动、段落状态、纠偏和报告事件产生 | HTTP/WebSocket 鉴权、Redis lease、跨 socket fan-out |
+
+- `session_started`、`source_sync_state`、`transcript_segment`、`translation_segment`、`audio_segment`、`revision_event`、`session_report` 和 `error` 的事件名、字段与错误文案保持兼容；拆分不能借机修改公开协议。
+- 租约续期失败先停止本 socket 的 runner、释放 owner，再尽力发送错误；Redis 不可用时只把锁服务错误暴露给当前会话，不得静默接管远端 runner。
+- handoff socket 始终只读：只能关闭自身连接，不能发送 PCM、暂停、恢复或停止主 runner。
+
 ## 依赖方向
 
 依赖只能向下流动：API -> services -> providers。禁止 provider 反向导入 API，禁止服务模块互相读取对方的私有状态。需要共享行为时，提取小型纯模块或明确的领域接口。
