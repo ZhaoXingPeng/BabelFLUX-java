@@ -12,6 +12,8 @@ named volumes 保存数据。实际密码、API key 与证书私钥不属于本�
 - `babelflux.service` 以无登录权限的 `babelflux` 用户运行，敏感配置从 root-only
   `/etc/babelflux/babelflux.env` 读取。
 - Elasticsearch 单节点必须将宿主机 `vm.max_map_count` 设为至少 `262144`。
+- 当前 Elasticsearch 容器限制为 `768 MiB`，因此使用 `384 MiB` 堆并关闭未使用的 ML 模块；
+  不要将堆恢复为 `512 MiB`，否则直接内存和原生开销可能触发 cgroup OOM 重启。
 
 ## 首次部署顺序
 

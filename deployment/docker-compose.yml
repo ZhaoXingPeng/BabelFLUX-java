@@ -67,7 +67,9 @@ services:
       cluster.name: babelflux
       xpack.security.enabled: "false"
       xpack.security.transport.ssl.enabled: "false"
-      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      xpack.ml.enabled: "false"
+      # Keep heap plus direct/native memory below this service's 768 MiB cgroup limit.
+      ES_JAVA_OPTS: -Xms384m -Xmx384m
     ports:
       - "127.0.0.1:9200:9200"
     volumes:
