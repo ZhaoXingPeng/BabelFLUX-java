@@ -2,6 +2,8 @@ package com.babelflux.backend.messaging;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.babelflux.backend.infrastructure.mybatis.SessionEventReceiptMapper;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -22,7 +24,8 @@ class SessionEventListenerTest {
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
         SessionEvent event = new SessionEvent("event-1", "session.created", 1, "session-1",
                 Instant.now(), Map.of("status", "created"));
-        SessionEventListener listener = new SessionEventListener(mapper, jdbc);
+        SessionEventListener listener = new SessionEventListener(mapper,
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventReceiptMapper.class));
 
         listener.consume(mapper.writeValueAsString(event));
         listener.consume(mapper.writeValueAsString(event));

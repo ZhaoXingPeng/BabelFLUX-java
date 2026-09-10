@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.babelflux.backend.domain.Session;
-import com.babelflux.backend.infrastructure.JdbcSessionRepository;
+import com.babelflux.backend.infrastructure.MyBatisSessionRepository;
+import com.babelflux.backend.infrastructure.mybatis.SessionPersistenceMapper;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.babelflux.backend.service.SessionReportService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -13,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
-class JdbcSessionRepositoryTest {
+class MyBatisSessionRepositoryTest {
     @Test
     void roundTripsSessionSegmentsAndReportSnapshot() {
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
@@ -27,7 +29,8 @@ class JdbcSessionRepositoryTest {
                 + "glossary_json text not null, "
                 + "segments_json text not null, report_json text)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
-        JdbcSessionRepository repository = new JdbcSessionRepository(jdbc, mapper);
+        MyBatisSessionRepository repository = new MyBatisSessionRepository(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionPersistenceMapper.class), mapper);
         SessionReportService reports = new SessionReportService();
         Session session = Session.create("jdbc-session", "JDBC test", "en", "zh", "通用",
                 "智能默认", "quick", "demo", "demo", "https://example.test/audio", "granted", true,
@@ -66,7 +69,8 @@ class JdbcSessionRepositoryTest {
                 + "product_mode varchar(32) not null, input_mode varchar(64) not null, source_label varchar(512) not null, "
                 + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
                 + "glossary_json text not null, segments_json text not null, report_json text)");
-        JdbcSessionRepository repository = new JdbcSessionRepository(jdbc,
+        MyBatisSessionRepository repository = new MyBatisSessionRepository(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionPersistenceMapper.class),
                 JsonMapper.builder().addModule(new JavaTimeModule()).build());
         Session session = Session.create("startup-snapshot", "startup", "en", "zh", "通用", "智能默认",
                 "quick", "demo", "demo", null, "idle", false, java.util.List.of());

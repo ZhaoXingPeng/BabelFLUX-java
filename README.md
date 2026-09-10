@@ -24,7 +24,7 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 项目的用户体验目标是“听得懂、跟得上、留得住”：用户可以从麦克风、系统音频、浏览器标签页、本地媒体或受限 URL 选择输入，在 Web 工作台实时查看原文/译文和纠偏高亮，也可以把同一会话投送到 Tauri 桌面悬浮窗；结束后在报告历史中查看状态、下载 TXT/SRT/Markdown/JSON，并在模型或网络异常时仍获得可用的实时译文报告。
 
-底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，MySQL 保存会话事实源，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
+底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。业务关系型持久化由 MyBatis 管理，MySQL 保存会话事实、事件 outbox、审计记录和报告索引任务；JDBC 仅保留启动期 schema 元数据/DDL 等基础设施职责。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
 
 实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 122 passed（4 个外部集成默认跳过），前端测试为 56/56，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。
 
@@ -77,7 +77,7 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 ### 后端迁移状态
 
-后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；RabbitMQ 事件 outbox、ES 报告检索与 MySQL 事实源边界已落地。实时链路已接入百炼 LiveTranslate：服务端维护 1 秒有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，在线纠偏在后台复核有界窗口，会后纠偏带超时和降级，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
+后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；会话事实、RabbitMQ 事件 outbox、审计记录和 ES 报告索引任务均通过 MyBatis Mapper 访问 MySQL，schema 初始化仍由 JDBC 负责。实时链路已接入百炼 LiveTranslate：服务端维护 1 秒有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，在线纠偏在后台复核有界窗口，会后纠偏带超时和降级，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
 
 ### 界面 03 模型策略
 
@@ -215,7 +215,7 @@ POST /api/models/tts/speech
 | --- | --- | --- |
 | Web 工作台 | Vue 3、Vite、TypeScript、Pinia | 实时同传界面状态多、更新频繁，Vue 组合式 API + Pinia 适合把会话、字幕、报告、输入源拆成清晰状态；Vite 保证开发调试快，TypeScript 降低 WebSocket 事件和报告结构的维护成本。 |
 | 字幕交互 | GSAP、CSS、@vueuse/core、@floating-ui/vue、video.js | 字幕流需要平滑入场、纠偏高亮、悬浮定位和媒体预览控制；这些库覆盖动画、浏览器能力封装、浮层定位与播放器能力，不需要为常见交互重新造轮子。 |
-| 后端服务 | Java 21、Spring Boot 3.4、Maven、虚拟线程、JDBC | 长连接事件流由 WebSocket runner 编排；领域服务、provider adapter 和持久化端口分层，便于测试和替换。会后纠偏在事务挂起边界内执行，超时自动降级。 |
+| 后端服务 | Java 21、Spring Boot 3.4、Maven、虚拟线程、MyBatis、JDBC | 长连接事件流由 WebSocket runner 编排；领域服务、provider adapter 和持久化端口分层，便于测试和替换。会话、outbox、审计和索引任务由 MyBatis Mapper 访问 MySQL；JDBC 只承担 schema 初始化等底层职责。会后纠偏在事务挂起边界内执行，超时自动降级。 |
 | 数据与中间件 | MySQL、Redis、RabbitMQ、Elasticsearch | MySQL 保存会话事实与 outbox，Redis 保存带 TTL 的票据，RabbitMQ 负责可重试事件，ES 作为可重建报告索引；默认关闭以保持本地可运行。 |
 | 桌面悬浮窗 | Tauri v2、Vue 3、deep-link、global-shortcut、store 插件 | 桌面端需要轻量、透明置顶、快捷键和 Web 会话接管；Tauri 复用前端技术栈，同时比传统 Electron 包体更小，适合演示和后续分发。 |
 | 模型链路 | 阿里云百炼 DashScope、LiveTranslate、qwen-flash、qwen-plus、qwen-tts | LiveTranslate 提供实时 ASR + 翻译低延迟链路；qwen-flash 用于在线跨句纠偏，qwen-plus 负责会后全局校正，按任务强度拆模型可以兼顾速度、成本和最终质量。 |

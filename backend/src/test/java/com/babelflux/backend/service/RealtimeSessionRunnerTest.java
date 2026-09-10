@@ -7,12 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.babelflux.backend.config.DashScopeProperties;
 import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.domain.Session;
-import com.babelflux.backend.infrastructure.JdbcSessionRepository;
 import com.babelflux.backend.infrastructure.InMemorySessionRepository;
+import com.babelflux.backend.infrastructure.MyBatisSessionRepository;
+import com.babelflux.backend.infrastructure.mybatis.SessionPersistenceMapper;
 import com.babelflux.backend.provider.dashscope.DashScopeRealtimeClient;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.search.ReportIndexingPort;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -61,7 +63,7 @@ class RealtimeSessionRunnerTest {
     }
 
     @Test
-    void retriesFinalizationAfterTransientJdbcFailureAndKeepsLatestSegments() throws Exception {
+    void retriesFinalizationAfterTransientPersistenceFailureAndKeepsLatestSegments() throws Exception {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:runner-finalize-retry;DB_CLOSE_DELAY=-1", "sa", "");
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
@@ -72,7 +74,8 @@ class RealtimeSessionRunnerTest {
                 + "product_mode varchar(32) not null, input_mode varchar(64) not null, source_label varchar(512) not null, "
                 + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
                 + "glossary_json text not null, segments_json text not null, report_json text)");
-        FlakyJdbcSessionRepository repository = new FlakyJdbcSessionRepository(jdbc,
+        FlakyMyBatisSessionRepository repository = new FlakyMyBatisSessionRepository(
+                MyBatisMapperTestSupport.mapper(dataSource, SessionPersistenceMapper.class),
                 JsonMapper.builder().addModule(new JavaTimeModule()).build());
         Session session = Session.create("finalize-retry", "retry", "en", "zh", "通用", "默认",
                 "quick", "demo", "demo", null, "idle", false, List.of());
@@ -415,12 +418,12 @@ class RealtimeSessionRunnerTest {
         return state != null && String.valueOf(state.get("message")).startsWith("媒体同步：");
     }
 
-    private static final class FlakyJdbcSessionRepository extends JdbcSessionRepository {
+    private static final class FlakyMyBatisSessionRepository extends MyBatisSessionRepository {
         private final AtomicBoolean failFinalSave = new AtomicBoolean();
         private final AtomicInteger saves = new AtomicInteger();
 
-        private FlakyJdbcSessionRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
-            super(jdbc, mapper);
+        private FlakyMyBatisSessionRepository(SessionPersistenceMapper sessions, ObjectMapper mapper) {
+            super(sessions, mapper);
         }
 
         private void failNextFinalSave() { failFinalSave.set(true); }
@@ -431,7 +434,7 @@ class RealtimeSessionRunnerTest {
             saves.incrementAndGet();
             if (failFinalSave.compareAndSet(true, false)
                     && "ended".equals(session.getStatus()) && session.getReport() != null) {
-                throw new IllegalStateException("transient JDBC write failure");
+                throw new IllegalStateException("transient persistence write failure");
             }
             return super.save(session);
         }

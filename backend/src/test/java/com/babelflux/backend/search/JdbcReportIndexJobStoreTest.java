@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.babelflux.backend.infrastructure.mybatis.ReportIndexJobMapper;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import java.time.Instant;
@@ -22,7 +24,8 @@ class JdbcReportIndexJobStoreTest {
                 + "attempts int not null, next_attempt_at timestamp not null, last_error varchar(1000), "
                 + "updated_at timestamp not null, lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().build();
-        JdbcReportIndexJobStore jobs = new JdbcReportIndexJobStore(jdbc, mapper);
+        JdbcReportIndexJobStore jobs = new JdbcReportIndexJobStore(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), ReportIndexJobMapper.class), mapper);
 
         jobs.enqueue("report-1", Map.of("summary", "first"));
         jobs.enqueue("report-1", Map.of("summary", "second"));
@@ -46,7 +49,9 @@ class JdbcReportIndexJobStoreTest {
                 + "report_id varchar(128) primary key, payload text not null, status varchar(16) not null, "
                 + "attempts int not null, next_attempt_at timestamp not null, last_error varchar(1000), "
                 + "updated_at timestamp not null, lease_owner varchar(128), lease_until timestamp)");
-        JdbcReportIndexJobStore jobs = new JdbcReportIndexJobStore(jdbc, JsonMapper.builder().build());
+        JdbcReportIndexJobStore jobs = new JdbcReportIndexJobStore(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), ReportIndexJobMapper.class),
+                JsonMapper.builder().build());
         jobs.enqueue("report-1", Map.of("summary", "lease"));
 
         assertTrue(jobs.tryClaim("report-1", "owner-a", Instant.now().plusSeconds(30)));

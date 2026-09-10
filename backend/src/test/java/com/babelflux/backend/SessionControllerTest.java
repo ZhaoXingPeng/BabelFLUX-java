@@ -15,7 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest
+@SpringBootTest(properties = "babelflux.infrastructure.mysql-enabled=true")
 @AutoConfigureMockMvc
 class SessionControllerTest {
     @Autowired MockMvc mockMvc;
@@ -121,9 +121,10 @@ class SessionControllerTest {
         mockMvc.perform(get("/api/sessions/" + sessionId + "/report"))
                 .andExpect(status().isNotFound());
 
-        sessions.get(sessionId).addSegment(new com.babelflux.backend.domain.Session.Segment(
+        var latest = sessions.get(sessionId);
+        latest.addSegment(new com.babelflux.backend.domain.Session.Segment(
                 "segment-1", "hello | world", "你好世界", 1234, 2345, "final"));
-        sessions.finish(sessionId);
+        sessions.finish(latest);
 
         mockMvc.perform(get("/api/sessions/" + sessionId + "/report"))
                 .andExpect(status().isOk())

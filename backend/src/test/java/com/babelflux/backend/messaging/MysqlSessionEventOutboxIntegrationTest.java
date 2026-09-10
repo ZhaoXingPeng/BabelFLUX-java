@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.babelflux.backend.infrastructure.mybatis.SessionEventOutboxMapper;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -23,7 +25,8 @@ class MysqlSessionEventOutboxIntegrationTest {
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 required("TEST_MYSQL_URL"), required("TEST_MYSQL_USERNAME"),
                 System.getenv().getOrDefault("TEST_MYSQL_PASSWORD", "")));
-        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc,
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventOutboxMapper.class),
                 JsonMapper.builder().addModule(new JavaTimeModule()).build());
         String eventId = "mysql-it-" + UUID.randomUUID();
         String owner = "mysql-it-relay";
@@ -58,7 +61,8 @@ class MysqlSessionEventOutboxIntegrationTest {
         JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 required("TEST_MYSQL_URL"), required("TEST_MYSQL_USERNAME"),
                 System.getenv().getOrDefault("TEST_MYSQL_PASSWORD", "")));
-        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc,
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventOutboxMapper.class),
                 JsonMapper.builder().addModule(new JavaTimeModule()).build());
         String eventId = "mysql-it-clock-" + UUID.randomUUID();
         String owner = "mysql-it-clock";
