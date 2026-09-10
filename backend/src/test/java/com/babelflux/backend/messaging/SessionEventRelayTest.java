@@ -6,6 +6,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.babelflux.backend.observability.MicrometerOperationalMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpException;
@@ -38,6 +40,26 @@ class SessionEventRelayTest {
         new SessionEventRelay(outbox, publisher).relay();
 
         verify(outbox).markFailed(eq("e-2"), any(String.class), any(java.time.Instant.class), eq("broker unavailable"));
+    }
+
+    @Test
+    void recordsDependencyFailureAndRetryForBrokerFailure() {
+        JdbcSessionEventOutbox outbox = mock(JdbcSessionEventOutbox.class);
+        EventPublisher publisher = mock(EventPublisher.class);
+        var event = new JdbcSessionEventOutbox.PendingEvent("e-5", "session.finished", "s-1", "{}", 0);
+        when(outbox.pending(100)).thenReturn(List.of(event));
+        when(outbox.tryClaim(any(String.class), any(String.class), any(java.time.Instant.class))).thenReturn(true);
+        org.mockito.Mockito.doThrow(new AmqpException("broker unavailable"))
+                .when(publisher).publish("session.finished", "{}");
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+
+        new SessionEventRelay(outbox, publisher, new MicrometerOperationalMetrics(registry)).relay();
+
+        org.assertj.core.api.Assertions.assertThat(registry.get("babelflux.dependency.failures")
+                .tag("dependency", "rabbitmq").counter().count()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(registry.get("babelflux.async.tasks")
+                .tags("component", "outbox", "operation", "publish", "outcome", "retry")
+                .counter().count()).isEqualTo(1);
     }
 
     @Test

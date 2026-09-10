@@ -57,6 +57,10 @@ return `404`.
 mvn -B test
 ```
 
+运行期指标和结构化日志约定见
+[Java 后端可观测性](../docs/operations/java-backend-observability.md)。Prometheus 指标位于
+`/actuator/prometheus`；生产部署只允许从服务器回环地址抓取，Nginx 不得将 `/actuator/**` 暴露到公网。
+
 The current suite covers health/session history, one-time handoff issue/claim,
 MyBatis and Redis state boundaries, Rabbit outbox delivery semantics, ES search
 contracts, realtime provider normalization, bounded runner behavior, and

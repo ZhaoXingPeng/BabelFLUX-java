@@ -4,6 +4,7 @@ import com.babelflux.backend.service.SessionService;
 import com.babelflux.backend.service.SessionTokenService;
 import com.babelflux.backend.service.RealtimeSessionRunner;
 import com.babelflux.backend.infrastructure.RedisSessionRepository;
+import com.babelflux.backend.observability.OperationalMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -11,6 +12,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.Executors;
@@ -40,9 +42,11 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
     private final SessionTokenService tokens;
     private final RealtimeSessionRunner runner;
     private final SessionEventHub eventHub;
+    private final OperationalMetrics metrics;
     private final ConcurrentMap<String, RealtimeSessionRunner.RunHandle> runs = new ConcurrentHashMap<>();
     /** One primary realtime runner is allowed per session; handoff sockets are read-only. */
     private final ConcurrentMap<String, String> activeSessionSockets = new ConcurrentHashMap<>();
+    private final Set<String> observedSockets = ConcurrentHashMap.newKeySet();
     private final RedisSessionRepository redis;
     private final ConcurrentMap<String, ScheduledFuture<?>> leaseRenewals = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, SessionEventHub.Subscription> handoffSubscriptions = new ConcurrentHashMap<>();
@@ -52,30 +56,47 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
 
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                                    RealtimeSessionRunner runner) {
-        this(mapper, sessions, tokens, runner, new SessionEventHub(), (RedisSessionRepository) null);
+        this(mapper, sessions, tokens, runner, new SessionEventHub(), (RedisSessionRepository) null,
+                OperationalMetrics.NOOP);
     }
 
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                                    RealtimeSessionRunner runner, SessionEventHub eventHub) {
-        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) null);
+        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) null, OperationalMetrics.NOOP);
+    }
+
+    public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
+                                   RealtimeSessionRunner runner, SessionEventHub eventHub,
+                                   ObjectProvider<RedisSessionRepository> redisProvider) {
+        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) redisProvider.getIfAvailable(),
+                OperationalMetrics.NOOP);
     }
 
     @Autowired
     public SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                                    RealtimeSessionRunner runner, SessionEventHub eventHub,
-                                   ObjectProvider<RedisSessionRepository> redisProvider) {
-        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) redisProvider.getIfAvailable());
+                                   ObjectProvider<RedisSessionRepository> redisProvider,
+                                   ObjectProvider<OperationalMetrics> metricsProvider) {
+        this(mapper, sessions, tokens, runner, eventHub, (RedisSessionRepository) redisProvider.getIfAvailable(),
+                metricsProvider.getIfAvailable());
     }
 
     SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
                             RealtimeSessionRunner runner, SessionEventHub eventHub,
                             RedisSessionRepository redis) {
+        this(mapper, sessions, tokens, runner, eventHub, redis, OperationalMetrics.NOOP);
+    }
+
+    SessionWebSocketHandler(ObjectMapper mapper, SessionService sessions, SessionTokenService tokens,
+                            RealtimeSessionRunner runner, SessionEventHub eventHub,
+                            RedisSessionRepository redis, OperationalMetrics metrics) {
         this.mapper = mapper;
         this.sessions = sessions;
         this.tokens = tokens;
         this.runner = runner;
         this.eventHub = eventHub;
         this.redis = redis;
+        this.metrics = metrics == null ? OperationalMetrics.NOOP : metrics;
         this.leaseExecutor = redis == null ? null
                 : Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("runner-lease-renew").factory());
     }
@@ -85,17 +106,28 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         String id = pathVariable(socket, "sessionId");
         String token = query(socket, "token");
         if (token == null || token.isBlank()) {
+            metrics.webSocketRejected("missing_token");
             send(socket, Map.of("type", "error", "message", "Missing WebSocket token"));
             socket.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        boolean handoff = tokens.valid(id, token, "handoff");
-        if (!handoff && !tokens.valid(id, token, "session")) {
-            send(socket, Map.of("type", "error", "message", "Invalid WebSocket token"));
-            socket.close(CloseStatus.POLICY_VIOLATION);
+        boolean handoff;
+        try {
+            handoff = tokens.valid(id, token, "handoff");
+            if (!handoff && !tokens.valid(id, token, "session")) {
+                metrics.webSocketRejected("invalid_token");
+                send(socket, Map.of("type", "error", "message", "Invalid WebSocket token"));
+                socket.close(CloseStatus.POLICY_VIOLATION);
+                return;
+            }
+        } catch (SessionTokenService.TokenStateUnavailableException error) {
+            metrics.webSocketRejected("token_state_unavailable");
+            send(socket, Map.of("type", "error", "message", "WebSocket token state unavailable"));
+            socket.close(CloseStatus.SERVER_ERROR);
             return;
         }
         sessions.get(id);
+        if (observedSockets.add(socket.getId())) metrics.webSocketOpened();
         if (handoff) startHandoff(socket, id);
         else send(socket, Map.of("type", "session_started", "sessionId", id));
     }
@@ -135,6 +167,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                         acquired = redis.tryAcquireRunnerLease(id, socket.getId(),
                                 Duration.ofSeconds(RUNNER_LEASE_TTL_SECONDS));
                     } catch (RuntimeException error) {
+                        metrics.dependencyFailure("redis");
                         activeSessionSockets.remove(id, socket.getId());
                         send(socket, Map.of("type", "error", "message", "会话锁服务暂不可用"));
                         return;
@@ -197,6 +230,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
                     try {
                         leaseHeld = redis.runnerLeaseHeld(id);
                     } catch (RuntimeException error) {
+                        metrics.dependencyFailure("redis");
                         send(socket, Map.of("type", "error", "message", "会话锁服务暂不可用"));
                         return;
                     }
@@ -261,6 +295,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         if (subscription != null) eventHub.unsubscribe(subscription);
         Future<?> task = handoffTasks.remove(socket.getId());
         if (task != null) task.cancel(true);
+        if (observedSockets.remove(socket.getId())) metrics.webSocketClosed(closeOutcome(status));
     }
 
     private void startHandoff(WebSocketSession socket, String sessionId) throws IOException {
@@ -300,6 +335,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             renewed = redis.renewRunnerLease(sessionId, socketId,
                     Duration.ofSeconds(RUNNER_LEASE_TTL_SECONDS));
         } catch (RuntimeException error) {
+            metrics.dependencyFailure("redis");
             renewed = false;
         }
         if (renewed) return;
@@ -323,6 +359,7 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
             try {
                 redis.releaseRunnerLease(sessionId, socketId);
             } catch (RuntimeException ignored) {
+                metrics.dependencyFailure("redis");
                 // The lease has a TTL and will expire if Redis is unavailable during cleanup.
             }
         }
@@ -359,6 +396,12 @@ public class SessionWebSocketHandler extends TextWebSocketHandler implements Web
         return value.longValue();
     }
     private static String query(WebSocketSession socket, String key) { return socket.getUri() == null ? null : org.springframework.web.util.UriComponentsBuilder.fromUri(socket.getUri()).build().getQueryParams().getFirst(key); }
+    private static String closeOutcome(CloseStatus status) {
+        if (status == null) return "unknown";
+        if (CloseStatus.NORMAL.equals(status)) return "normal";
+        if (CloseStatus.POLICY_VIOLATION.equals(status)) return "policy";
+        return "other";
+    }
     private static String pathVariable(WebSocketSession socket, String key) {
         Object attribute = socket.getAttributes().get(key);
         if (attribute != null) return attribute.toString();
