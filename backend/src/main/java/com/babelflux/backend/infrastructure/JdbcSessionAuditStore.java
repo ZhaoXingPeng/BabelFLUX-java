@@ -1,20 +1,19 @@
 package com.babelflux.backend.infrastructure;
 
 import com.babelflux.backend.domain.Session;
+import com.babelflux.backend.infrastructure.mybatis.SessionAuditMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/** Relational audit adapter; full aggregate persistence is a later migration slice. */
+/** MyBatis-backed relational audit adapter. */
 @Component
 @ConditionalOnProperty(prefix = "babelflux.infrastructure", name = "mysql-enabled", havingValue = "true")
 public class JdbcSessionAuditStore {
-    private final JdbcTemplate jdbc;
+    private final SessionAuditMapper statements;
 
-    public JdbcSessionAuditStore(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public JdbcSessionAuditStore(SessionAuditMapper statements) { this.statements = statements; }
 
     public void recordCreated(Session session) {
-        jdbc.update("insert into babelflux_session_audit(session_id, status) values (?, ?)",
-                session.getId(), session.getStatus());
+        statements.recordCreated(session.getId(), session.getStatus());
     }
 }

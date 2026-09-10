@@ -1,25 +1,23 @@
 package com.babelflux.backend.search;
 
 import com.babelflux.backend.infrastructure.JdbcTemporal;
+import com.babelflux.backend.infrastructure.mybatis.ReportIndexJobMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class JdbcReportIndexJobStore {
-    private final JdbcTemplate jdbc;
+    private final ReportIndexJobMapper statements;
     private final ObjectMapper mapper;
 
-    public JdbcReportIndexJobStore(JdbcTemplate jdbc, ObjectMapper mapper) {
-        this.jdbc = jdbc;
+    public JdbcReportIndexJobStore(ReportIndexJobMapper statements, ObjectMapper mapper) {
+        this.statements = statements;
         this.mapper = mapper;
     }
 
@@ -31,75 +29,48 @@ public class JdbcReportIndexJobStore {
             throw new IllegalStateException("report index document cannot be serialized", error);
         }
         Timestamp now = JdbcTemporal.now();
-        int updated = jdbc.update("update babelflux_report_index_jobs set payload=?, status='pending', attempts=0, "
-                        + "next_attempt_at=?, last_error=null, lease_owner=null, lease_until=null, "
-                        + "updated_at=? where report_id=?",
-                payload, now, now, reportId);
+        int updated = statements.resetPending(reportId, payload, now);
         if (updated == 0) {
             try {
-                jdbc.update("insert into babelflux_report_index_jobs "
-                                + "(report_id, payload, status, attempts, next_attempt_at, updated_at) "
-                                + "values (?, ?, 'pending', 0, ?, ?)", reportId, payload, now, now);
+                statements.insertPending(reportId, payload, now);
             } catch (DuplicateKeyException race) {
-                jdbc.update("update babelflux_report_index_jobs set payload=?, status='pending', attempts=0, "
-                                + "next_attempt_at=?, last_error=null, lease_owner=null, lease_until=null, "
-                                + "updated_at=? where report_id=?",
-                        payload, now, now, reportId);
+                statements.resetPending(reportId, payload, now);
             }
         }
     }
 
     public List<PendingJob> pending(int limit) {
         Timestamp now = JdbcTemporal.now();
-        return jdbc.query("select report_id, payload, attempts from babelflux_report_index_jobs "
-                        + "where (status='pending' and next_attempt_at <= ?) "
-                        + "or (status='processing' and lease_until is not null and lease_until <= ?) "
-                        + "order by updated_at limit ?", this::map, now, now, limit);
+        return statements.pending(now, limit).stream()
+                .map(row -> new PendingJob(row.getReportId(), row.getPayload(), row.getAttempts()))
+                .toList();
     }
 
     /** Claims one job so concurrent indexers do not write the same report normally. */
     public boolean tryClaim(String reportId, String owner, Instant leaseUntil) {
         Timestamp now = JdbcTemporal.now();
-        return jdbc.update("update babelflux_report_index_jobs set status='processing', lease_owner=?, lease_until=? "
-                        + "where report_id=? and ((status='pending' and next_attempt_at <= ?) "
-                        + "or (status='processing' and lease_until is not null and lease_until <= ?))",
-                owner, JdbcTemporal.future(leaseUntil), reportId, now, now) == 1;
+        return statements.tryClaim(reportId, owner, JdbcTemporal.future(leaseUntil), now) == 1;
     }
 
     public Optional<JobStatus> status(String reportId) {
-        return jdbc.query("select report_id, status, attempts, next_attempt_at, last_error, updated_at "
-                        + "from babelflux_report_index_jobs where report_id=?", this::mapStatus, reportId)
-                .stream().findFirst();
+        return statements.status(reportId).stream().findFirst().map(row -> new JobStatus(row.getReportId(),
+                row.getStatus(), row.getAttempts(), instant(row.getNextAttemptAt()), row.getLastError(),
+                instant(row.getUpdatedAt())));
     }
 
     public void markIndexed(String reportId, String owner) {
-        jdbc.update("update babelflux_report_index_jobs set status='indexed', updated_at=?, "
-                + "last_error=null, lease_owner=null, lease_until=null where report_id=? "
-                + "and status='processing' and lease_owner=?",
-                JdbcTemporal.now(), reportId, owner);
+        statements.markIndexed(reportId, owner, JdbcTemporal.now());
     }
 
     public void markFailed(String reportId, String owner, Instant nextAttemptAt, String error) {
         String detail = error == null ? "unknown indexing failure" : error;
         if (detail.length() > 1000) detail = detail.substring(0, 1000);
         Instant reference = Instant.now();
-        jdbc.update("update babelflux_report_index_jobs set status='pending', attempts=attempts+1, next_attempt_at=?, "
-                        + "last_error=?, lease_owner=null, lease_until=null, updated_at=? "
-                        + "where report_id=? and status='processing' and lease_owner=?",
-                JdbcTemporal.dueAt(nextAttemptAt, reference), detail, JdbcTemporal.from(reference), reportId, owner);
+        statements.markFailed(reportId, owner, JdbcTemporal.dueAt(nextAttemptAt, reference), detail,
+                JdbcTemporal.from(reference));
     }
 
-    private PendingJob map(ResultSet row, int ignored) throws SQLException {
-        return new PendingJob(row.getString("report_id"), row.getString("payload"), row.getInt("attempts"));
-    }
-
-    private JobStatus mapStatus(ResultSet row, int ignored) throws SQLException {
-        Timestamp next = row.getTimestamp("next_attempt_at");
-        Timestamp updated = row.getTimestamp("updated_at");
-        return new JobStatus(row.getString("report_id"), row.getString("status"), row.getInt("attempts"),
-                next == null ? null : next.toInstant(), row.getString("last_error"),
-                updated == null ? null : updated.toInstant());
-    }
+    private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
 
     public record PendingJob(String reportId, String payload, int attempts) {}
     public record JobStatus(String reportId, String status, int attempts, Instant nextAttemptAt,

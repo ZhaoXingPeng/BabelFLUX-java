@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.babelflux.backend.infrastructure.mybatis.SessionEventOutboxMapper;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -25,7 +27,8 @@ class JdbcSessionEventOutboxTest {
                 + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
-        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventOutboxMapper.class), mapper);
         SessionEvent event = new SessionEvent("event-1", "session.created", 1, "session-1",
                 Instant.now(), Map.of("status", "created"));
 
@@ -54,7 +57,8 @@ class JdbcSessionEventOutboxTest {
                 + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
-        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventOutboxMapper.class), mapper);
         outbox.append(new SessionEvent("event-claim", "session.created", 1, "session-1",
                 Instant.now(), Map.of("status", "created")));
 
@@ -75,7 +79,8 @@ class JdbcSessionEventOutboxTest {
                 + "created_at timestamp default current_timestamp, published_at timestamp, last_error varchar(1000), "
                 + "lease_owner varchar(128), lease_until timestamp)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
-        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(jdbc, mapper);
+        JdbcSessionEventOutbox outbox = new JdbcSessionEventOutbox(
+                MyBatisMapperTestSupport.mapper(jdbc.getDataSource(), SessionEventOutboxMapper.class), mapper);
         outbox.append(new SessionEvent("event-recovery", "session.finished", 1, "session-1",
                 Instant.now(), Map.of("status", "finished")));
 

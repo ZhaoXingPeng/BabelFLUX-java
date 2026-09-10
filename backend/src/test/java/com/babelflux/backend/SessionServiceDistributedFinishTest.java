@@ -12,12 +12,14 @@ import static org.mockito.Mockito.when;
 import com.babelflux.backend.config.BabelFluxProperties;
 import com.babelflux.backend.domain.Session;
 import com.babelflux.backend.domain.SessionReport;
-import com.babelflux.backend.infrastructure.JdbcSessionRepository;
+import com.babelflux.backend.infrastructure.MyBatisSessionRepository;
+import com.babelflux.backend.infrastructure.mybatis.SessionPersistenceMapper;
 import com.babelflux.backend.messaging.JdbcSessionEventOutbox;
 import com.babelflux.backend.messaging.SessionEventFactory;
 import com.babelflux.backend.search.ReportIndexingPort;
 import com.babelflux.backend.service.SessionReportService;
 import com.babelflux.backend.service.SessionService;
+import com.babelflux.backend.support.MyBatisMapperTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -48,7 +50,8 @@ class SessionServiceDistributedFinishTest {
                 + "source_url varchar(2048), source_permission varchar(32) not null, tts_enabled boolean not null, "
                 + "glossary_json text not null, segments_json text not null, report_json text)");
         ObjectMapper mapper = JsonMapper.builder().addModule(new JavaTimeModule()).build();
-        JdbcSessionRepository repository = new JdbcSessionRepository(jdbc, mapper);
+        MyBatisSessionRepository repository = new MyBatisSessionRepository(
+                MyBatisMapperTestSupport.mapper(dataSource, SessionPersistenceMapper.class), mapper);
         Session session = Session.create("distributed-finish", "race", "en", "zh", "通用", "默认",
                 "quick", "demo", "demo", null, "idle", false, List.of());
         repository.save(session);
@@ -82,7 +85,7 @@ class SessionServiceDistributedFinishTest {
         assertTrue("ended".equals(restored.getStatus()));
     }
 
-    private static SessionService service(JdbcSessionRepository repository, SessionReportService reports) {
+    private static SessionService service(MyBatisSessionRepository repository, SessionReportService reports) {
         return new SessionService(repository, reports, new BabelFluxProperties(),
                 mock(JdbcSessionEventOutbox.class), mock(SessionEventFactory.class), mock(ReportIndexingPort.class));
     }
