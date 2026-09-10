@@ -56,6 +56,7 @@ import {
   videoFixtures,
   FIXTURE_SUBTITLE_LATENCY_MS
 } from "./sessionFixture";
+import { sendAudioChunk } from "../realtime/audioBackpressure";
 
 let socket: WebSocket | null = null;
 let desktopLaunchTimer: number | null = null;
@@ -123,9 +124,6 @@ const OUTPUT_LATENCY_SAMPLE_SIZE = 8;
 const ACTIVE_PENDING_TRANSLATION_HOLD_MS = 2600;
 const REPORT_READY_TIMEOUT_MS = 150_000;
 const REPORT_POLL_INTERVAL_MS = 1_000;
-// 16kHz s16le mono 约 32KB/s；超过 1 秒发送积压时丢当前帧，避免旧音频拖慢同传。
-const MAX_AUDIO_SOCKET_BUFFER_BYTES = 32_000;
-
 const defaultSourceSyncState: SourceSyncState = {
   status: "listening",
   lagMs: 0,
@@ -468,12 +466,6 @@ function triggerDownload(url: string, filename?: string) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-}
-
-function sendAudioChunk(chunk: ArrayBuffer) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  if (socket.bufferedAmount > MAX_AUDIO_SOCKET_BUFFER_BYTES) return;
-  socket.send(chunk);
 }
 
 function srtTimestamp(ms: number): string {
@@ -1677,7 +1669,7 @@ export const useSessionStore = defineStore("session", {
         audioCapture = await startAudioCapture(stream, {
           frameMs: 40,
           onChunk: (chunk) => {
-            sendAudioChunk(chunk);
+            this.handleCapturedAudioChunk(chunk);
           },
           onEnded: () => {
             // 用户在系统选择器中停止共享 → 通知后端收尾并出报告。
@@ -1717,7 +1709,7 @@ export const useSessionStore = defineStore("session", {
             frameMs: 40,
             monitorMuted: this.quickForm.ttsEnabled,
             onChunk: (chunk) => {
-              sendAudioChunk(chunk);
+              this.handleCapturedAudioChunk(chunk);
             },
             onClock: (clock) => {
               if (socket && socket.readyState === WebSocket.OPEN) {
@@ -1752,6 +1744,25 @@ export const useSessionStore = defineStore("session", {
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "audio_end" }));
         }
+      }
+    },
+
+    handleCapturedAudioChunk(chunk: ArrayBuffer) {
+      const result = sendAudioChunk(socket, WebSocket.OPEN, chunk);
+      if (result.state === "backpressured") {
+        this.sourceSyncState = {
+          status: "lagging",
+          lagMs: result.estimatedLagMs,
+          message: `浏览器发送缓冲约 ${result.estimatedLagMs} ms，已丢弃当前音频帧`
+        };
+        return;
+      }
+      if (result.state === "sent" && this.sourceSyncState.message.startsWith("浏览器发送缓冲")) {
+        this.sourceSyncState = {
+          status: "syncing",
+          lagMs: 0,
+          message: "浏览器发送缓冲已恢复"
+        };
       }
     },
 
