@@ -65,11 +65,18 @@ public class DashScopeRealtimeClient {
     }
 
     private String websocketUrl(String model) {
+        return websocketBaseUrl() + "/realtime?model="
+                + URLEncoder.encode(model, StandardCharsets.UTF_8);
+    }
+
+    private String websocketBaseUrl() {
+        String configured = properties.getWebsocketBaseUrl();
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim().replaceFirst("^http", "ws").replaceFirst("/+$", "");
+        }
         String base = properties.getBaseUrl().replaceFirst("^http", "ws");
         int api = base.indexOf("/api/");
-        String origin = api < 0 ? base : base.substring(0, api);
-        return origin + "/api-ws/v1/realtime?model="
-                + URLEncoder.encode(model, StandardCharsets.UTF_8);
+        return (api < 0 ? base : base.substring(0, api)) + "/api-ws/v1";
     }
 
     private Map<String, String> headers() {

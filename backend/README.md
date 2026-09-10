@@ -90,6 +90,15 @@ When it points at a Bailian `/compatible-mode/v1` endpoint, the adapter uses
 `/chat/completions` and keeps the same response contract. `DASHSCOPE_API_KEY`
 is required at request time and is never logged or persisted.
 
+`DASHSCOPE_WEBSOCKET_BASE_URL` is configured independently for LiveTranslate,
+ASR, and realtime TTS. Set it to the standard DashScope WebSocket API base,
+for example `wss://dashscope.aliyuncs.com/api-ws/v1`, when the HTTP base is a
+business-space OpenAI-compatible endpoint. The value accepts an `http` or
+`https` scheme and normalizes it to `ws` or `wss`; a trailing slash is ignored.
+When it is omitted, the clients retain the legacy behavior of deriving
+`/api-ws/v1` from `DASHSCOPE_HTTP_BASE_URL` for existing standard-endpoint
+deployments.
+
 The model protocol also exposes:
 
 - `POST /api/models/strategy/plan` for a deterministic provider/revision plan;

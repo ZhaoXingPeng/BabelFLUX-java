@@ -42,6 +42,23 @@ class DashScopeRealtimeClientTest {
         assertTrue(connection.sent.getLast().contains("input_audio_buffer.append"));
     }
 
+    @Test
+    void usesExplicitWebsocketBaseUrlInsteadOfCompatibleHttpBaseUrl() {
+        DashScopeProperties properties = new DashScopeProperties();
+        properties.setApiKey("test-key");
+        properties.setBaseUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1");
+        properties.setWebsocketBaseUrl("wss://dashscope.aliyuncs.com/api-ws/v1/");
+        FakeConnection connection = new FakeConnection();
+        DashScopeRealtimeClient client = new DashScopeRealtimeClient(properties, new ObjectMapper(),
+                (url, headers) -> {
+                    assertEquals("wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=test-model", url);
+                    return connection;
+                });
+
+        client.connect(new DashScopeRealtimeClient.Request(
+                "test-model", "en", "zh", null, false, null, 16_000, Map.of()));
+    }
+
     private static final class FakeConnection implements DashScopeRealtimeClient.Connection {
         private final ArrayDeque<String> received = new ArrayDeque<>();
         private final List<String> sent = new ArrayList<>();
