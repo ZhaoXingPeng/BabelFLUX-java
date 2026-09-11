@@ -1,0 +1,152 @@
+name: 发布 BabelFlux
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的 v* tag（仅用于重新运行构建，发布仍需确认）
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: "0.1.0"
+
+jobs:
+  verify-and-package:
+    name: 校验并打包 Java/Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - name: 校验 tag 与版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then tag="${{ github.event.inputs.tag }}"; fi
+          test "${tag}" = "v${RELEASE_VERSION}"
+          grep -q "<version>${RELEASE_VERSION}</version>" backend/pom.xml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+      - name: 前端测试与生产构建
+        working-directory: frontend
+        run: |
+          npm run test
+          npm run build
+      - name: 后端测试与 Maven Package
+        working-directory: backend
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          mvn -B test
+          mvn -B deploy -DskipTests
+      - name: 组装统一发行包
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf release-staging
+          mkdir -p "release-staging/babelflux-v${RELEASE_VERSION}/backend" "release-staging/babelflux-v${RELEASE_VERSION}/frontend" "release-staging/babelflux-v${RELEASE_VERSION}/deployment"
+          cp "backend/target/babelflux-backend-${RELEASE_VERSION}.jar" "release-staging/babelflux-v${RELEASE_VERSION}/backend/"
+          cp -r frontend/dist "release-staging/babelflux-v${RELEASE_VERSION}/frontend/"
+          cp -r deployment/. "release-staging/babelflux-v${RELEASE_VERSION}/deployment/"
+          cp README.md LICENSE SECURITY.md "release-staging/babelflux-v${RELEASE_VERSION}/"
+          (cd release-staging && zip -qr "../babelflux-v${RELEASE_VERSION}-bundle.zip" "babelflux-v${RELEASE_VERSION}")
+      - name: 上传 Web/Java 资产
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-web-java
+          path: babelflux-v${{ env.RELEASE_VERSION }}-bundle.zip
+
+  desktop:
+    name: 构建 Windows 桌面安装包
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装桌面依赖
+        working-directory: desktop
+        run: npm ci
+      - name: 桌面类型检查与 NSIS 构建
+        working-directory: desktop
+        run: npm run client:bundle
+      - name: 上传 Windows 安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+
+  publish-release:
+    name: 创建 GitHub Release
+    needs: [verify-and-package, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-web-java
+          path: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: release-assets
+      - name: 生成发行资产校验和
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          assets=( *.zip *.exe )
+          test "${#assets[@]}" -ge 2
+          sha256sum "${assets[@]}" > SHA256SUMS.txt
+      - name: 发布 Release 资产
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then tag="${{ github.event.inputs.tag }}"; fi
+          gh release create "${tag}" release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "BabelFlux ${tag}" \
+            --generate-notes \
+            --verify-tag

@@ -24,9 +24,9 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 项目的用户体验目标是“听得懂、跟得上、留得住”：用户可以从麦克风、系统音频、浏览器标签页、本地媒体或受限 URL 选择输入，在 Web 工作台实时查看原文/译文和纠偏高亮，也可以把同一会话投送到 Tauri 桌面悬浮窗；结束后在报告历史中查看状态、下载 TXT/SRT/Markdown/JSON，并在模型或网络异常时仍获得可用的实时译文报告。
 
-底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。业务关系型持久化由 MyBatis 管理，MySQL 保存会话事实、事件 outbox、审计记录和报告索引任务；JDBC 仅保留启动期 schema 元数据/DDL 等基础设施职责。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
+底层实现采用 Java 21 + Spring Boot 3，WebSocket 承载 16 kHz 单声道 PCM 与字幕事件，REST 管理会话和报告。业务关系型持久化由 MyBatis 管理，MySQL 保存会话事实、事件 outbox、审计记录和报告索引任务；schema 演进由 Flyway migration 管理，Spring JDBC 保留事务和基础设施访问职责。实时链路连接阿里云百炼 DashScope LiveTranslate，在线纠偏和会后纠偏分层运行；有界 PCM 队列和背压保护长会话，Redis 负责跨实例事件 fan-out，RabbitMQ outbox 解耦异步任务，Elasticsearch 提供报告索引。模型超时、未配置或中间件不可用时，会按边界降级到 mock 事件流或纯实时译文报告，保证“结束后可查看、可下载”的主流程成立。
 
-实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 133 passed（5 个外部集成默认跳过），前端测试为 59/59，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。固定合成 PCM 的五轮背压/超时模拟基线与浏览器发送缓冲阈值见 [`docs/verification/realtime-performance-baseline.md`](docs/verification/realtime-performance-baseline.md)，它不构成真实模型或线上 SLA 结论。
+实现与验证以仓库内的真实记录为准：前后端均可在 Windows 本机启动，后端测试基线为 134 passed（5 个外部集成默认跳过），前端测试为 59/59，生产构建通过；MySQL、Redis、RabbitMQ、Elasticsearch 和百炼真实链路的启动命令、会话证据、故障边界及用户体验矩阵见 [`docs/verification/voice-experience-matrix.md`](docs/verification/voice-experience-matrix.md)。固定合成 PCM 的五轮背压/超时模拟基线与浏览器发送缓冲阈值见 [`docs/verification/realtime-performance-baseline.md`](docs/verification/realtime-performance-baseline.md)，它不构成真实模型或线上 SLA 结论。
 
 ---
 
@@ -77,7 +77,7 @@ BabelFlux Java 是一个面向演讲、技术分享、国际会议和在线课�
 
 ### 后端迁移状态
 
-后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；会话事实、RabbitMQ 事件 outbox、审计记录和 ES 报告索引任务均通过 MyBatis Mapper 访问 MySQL，schema 初始化仍由 JDBC 负责。实时链路已接入百炼 LiveTranslate：服务端维护 1 秒有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，在线纠偏在后台复核有界窗口，会后纠偏带超时和降级，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
+后端已在独立工作区迁移到 `backend/` 下的 Java 21 + Spring Boot 3.4 模块，原 Python 后端已移除。当前迁移切片提供健康检查、会话生命周期 REST API、兼容的原始 WebSocket 接入、百炼 HTTP/实时 WebSocket 客户端，以及 Redis/RabbitMQ/Elasticsearch 的可选适配器；会话事实、RabbitMQ 事件 outbox、审计记录和 ES 报告索引任务均通过 MyBatis Mapper 访问 MySQL，schema 由 Flyway 版本化迁移管理，并可使用独立的迁移账号。实时链路已接入百炼 LiveTranslate：服务端维护默认 250 帧（约 10 秒）的有界 PCM 队列、处理 partial/final 双语事件和可选 TTS 音频，在线纠偏在后台复核有界窗口，会后纠偏带超时和降级，并在结束时把段落与报告持久化到 MySQL。中间件默认关闭，启用方式和验证边界见 [backend/README.md](backend/README.md)。
 
 ### 界面 03 模型策略
 
@@ -132,6 +132,24 @@ npm run tauri dev           # 开发态 devUrl 5175；npm run tauri build 出安
 npm run client:build        # 生成 release exe（deep link 实测用）
 npm run client:register     # 注册 lingosync:// 到 release exe
 ```
+
+## 初始发布与获取
+
+[`v0.1.0`](https://github.com/ZhaoXingPeng/BabelFLUX-java/releases/tag/v0.1.0) 是首个可追溯发行版。Release 包含以下资产：
+
+- `babelflux-v0.1.0-bundle.zip`：Spring Boot 可执行 JAR、Web `dist`、部署模板、README、LICENSE 与 SECURITY 文档；不包含 `.env`、密钥或真实数据。
+- `BabelFlux Floating Caption_0.1.0_x64-setup.exe`：Windows x64 的 NSIS 桌面悬浮字幕安装包。
+- `SHA256SUMS.txt`：上述 ZIP 与 Windows 安装包的 SHA-256 校验和。
+
+下载后可在 PowerShell 校验资产完整性：
+
+```powershell
+Get-FileHash .\文件名 -Algorithm SHA256
+```
+
+后端同步发布到 GitHub Packages Maven Registry：`com.babelflux:babelflux-backend:0.1.0`，Registry 为 `https://maven.pkg.github.com/ZhaoXingPeng/BabelFLUX-java`。消费私有包时，使用具备 `read:packages` 权限的 GitHub 凭据配置 Maven `server`，不要将 token 写入 `pom.xml`、仓库或日志。
+
+Release 只提供可验证构建产物，不会自动部署。回滚时使用前一个已验证 Release 的资产，并按照 [`deployment/README.md`](deployment/README.md) 将服务软链接切回该版本。
 
 ## 桌面投送
 
@@ -215,7 +233,7 @@ POST /api/models/tts/speech
 | --- | --- | --- |
 | Web 工作台 | Vue 3、Vite、TypeScript、Pinia | 实时同传界面状态多、更新频繁，Vue 组合式 API + Pinia 适合把会话、字幕、报告、输入源拆成清晰状态；Vite 保证开发调试快，TypeScript 降低 WebSocket 事件和报告结构的维护成本。 |
 | 字幕交互 | GSAP、CSS、@vueuse/core、@floating-ui/vue、video.js | 字幕流需要平滑入场、纠偏高亮、悬浮定位和媒体预览控制；这些库覆盖动画、浏览器能力封装、浮层定位与播放器能力，不需要为常见交互重新造轮子。 |
-| 后端服务 | Java 21、Spring Boot 3.4、Maven、虚拟线程、MyBatis、JDBC | 长连接事件流由 WebSocket runner 编排；领域服务、provider adapter 和持久化端口分层，便于测试和替换。会话、outbox、审计和索引任务由 MyBatis Mapper 访问 MySQL；JDBC 只承担 schema 初始化等底层职责。会后纠偏在事务挂起边界内执行，超时自动降级。 |
+| 后端服务 | Java 21、Spring Boot 3.4、Maven、虚拟线程、MyBatis、Flyway | 长连接事件流由 WebSocket runner 编排；领域服务、provider adapter 和持久化端口分层，便于测试和替换。会话、outbox、审计和索引任务由 MyBatis Mapper 访问 MySQL；Flyway 负责版本化 schema 迁移，应用账号与迁移账号可分离。会后纠偏在事务挂起边界内执行，超时自动降级。 |
 | 数据与中间件 | MySQL、Redis、RabbitMQ、Elasticsearch | MySQL 保存会话事实与 outbox，Redis 保存带 TTL 的票据，RabbitMQ 负责可重试事件，ES 作为可重建报告索引；默认关闭以保持本地可运行。 |
 | 桌面悬浮窗 | Tauri v2、Vue 3、deep-link、global-shortcut、store 插件 | 桌面端需要轻量、透明置顶、快捷键和 Web 会话接管；Tauri 复用前端技术栈，同时比传统 Electron 包体更小，适合演示和后续分发。 |
 | 模型链路 | 阿里云百炼 DashScope、LiveTranslate、qwen-flash、qwen-plus、qwen-tts | LiveTranslate 提供实时 ASR + 翻译低延迟链路；qwen-flash 用于在线跨句纠偏，qwen-plus 负责会后全局校正，按任务强度拆模型可以兼顾速度、成本和最终质量。 |
@@ -227,8 +245,8 @@ POST /api/models/tts/speech
 ## 测试与验证
 
 ```bash
-cd backend && mvn -B test              # Java 后端单元/契约测试（122 passed，4 个外部集成测试按默认配置跳过）
-cd frontend && npm run test -- --run   # 前端 Vitest（56 passed）
+cd backend && mvn -B test              # Java 后端单元/契约测试（134 passed，5 个外部集成测试按默认配置跳过）
+cd frontend && npm run test -- --run   # 前端 Vitest（59 passed）
 cd frontend && npm run build           # 前端 vue-tsc + Vite 生产构建
 cd desktop && npx vue-tsc --noEmit     # 桌面类型检查
 cd desktop && npm run client:build     # 桌面 release exe，验证 deep link 实际运行包
@@ -265,8 +283,12 @@ BabelFlux / 巴别流 同传的 Java 迁移切片已落地为可运行的会话�
 | [PR #91](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/91) TTS 播放代际 | 新句到达时停止旧音频，迟到旧块不再回放；5 次真实会话已验证序列和错误数 |
 | [PR #87](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/87) JDBC 调度时间精度 | 统一整秒 timestamp 的 claim/lease/backoff 取整规则，真实 MySQL/ES 索引闭环通过 |
 | [PR #98](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/98) 首页规范标题 | 根目录文档、模板和示例配置已统一为中文 Gitmoji 提交语义，旧历史未重写 |
+| [PR #125](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/125) Flyway schema 迁移 | Flyway 接管 schema 演进，应用 DML 与迁移 DDL 账号分离；隔离 MySQL 的迁移、权限拒绝和备份恢复已验证 |
+| [PR #126](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/126) 可观测性 | 增加脱敏结构化日志与 Prometheus 指标；`/actuator/prometheus` 仅允许服务器回环抓取 |
+| [PR #127](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/127) PCM 背压基线 | 五轮受控合成 PCM 基线覆盖分位数、丢帧和 timeout 收尾；浏览器背压改为可见状态 |
+| [PR #128](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/128) 会话编排拆分 | WebSocket 适配、租约、运行编排和 handoff 投送解耦，协议回归通过 |
 
-已完成能力不等同于生产级结论：20 分钟长时稳定性、>=5 次同规模性能分位数、浏览器 `bufferedAmount` 背压、扬声器声学测量、多节点中间件 HA 和百炼模型覆盖仍在 [Issue #96](https://github.com/ZhaoXingPeng/BabelFLUX-java/issues/96) 排队，必须用真实启动、真实输入和可审计日志逐项验证。
+已完成能力不等同于生产级结论：20 分钟长时稳定性、真实 provider 与浏览器下的重复性能分位数、扬声器声学测量、多节点中间件 HA 和百炼模型覆盖仍由 [Issue #129](https://github.com/ZhaoXingPeng/BabelFLUX-java/issues/129) 协调；每项工作需先建立单一目标的子 Issue，再以真实启动、已授权输入和可审计日志逐项验证。初始发布的范围见 [Issue #130](https://github.com/ZhaoXingPeng/BabelFLUX-java/issues/130)。
 
 ## 工程规范入口
 

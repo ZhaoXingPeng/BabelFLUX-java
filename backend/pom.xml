@@ -13,9 +13,17 @@
 
     <groupId>com.babelflux</groupId>
     <artifactId>babelflux-backend</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <name>BabelFlux Java Backend</name>
     <description>Spring Boot backend for the BabelFlux simultaneous interpretation assistant</description>
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub ZhaoXingPeng Apache Maven Packages</name>
+            <url>https://maven.pkg.github.com/ZhaoXingPeng/BabelFLUX-java</url>
+        </repository>
+    </distributionManagement>
 
     <properties>
         <java.version>21</java.version>
@@ -113,6 +121,17 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <phase>package</phase>
+                        <goals><goal>jar-no-fork</goal></goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

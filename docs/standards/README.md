@@ -58,7 +58,7 @@
 密钥、Authorization、Cookie、原始音频和真实用户隐私只能保留在受控本地环境，不能进入仓库、
 Issue、PR 或日志。
 
-## 最近工作确认（2026-09-09）
+## 最近工作确认（2026-09-10）
 
 | PR | 结果 | 证据 |
 | --- | --- | --- |
@@ -67,7 +67,11 @@ Issue、PR 或日志。
 | [#91](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/91) | 新句到达时中断旧 TTS，丢弃迟到旧块 | 5 次真实会话的音频代际和前端播放测试 |
 | [#87](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/87) | JDBC scheduler timestamp 精度统一 | MySQL/H2 失败样例、outbox/ES claim 回归 |
 | [#98](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/98) | 首页文件的规范说明和提交示例统一 | YAML 解析、diff 检查和合并后首页标题核对 |
+| [#125](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/125) | Flyway 接管 MySQL schema 迁移，分离应用与迁移账号 | 新库/显式 baseline、隔离 MySQL 权限拒绝与备份恢复演练 |
+| [#126](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/126) | 增加结构化日志与 Prometheus 运行指标 | `/actuator/prometheus`、脱敏 request ID 与依赖失败指标回归 |
+| [#127](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/127) | 建立受控 PCM 背压与 timeout 基线 | 五轮合成 PCM 分位数、丢帧计量、报告收尾和浏览器背压单测 |
+| [#128](https://github.com/ZhaoXingPeng/BabelFLUX-java/pull/128) | 拆分 WebSocket 会话编排职责 | `SessionWebSocketHandlerTest` 13/13 与会话、lease、handoff 回归 |
 
-当前完整门禁最近一次结果为后端 122 通过、4 个外部集成按默认配置跳过，前端 56/56，
-Frontend/Backend/Desktop 远端检查全部通过；这不替代 Issue #96 中尚未完成的 20 分钟长时稳定性、
-重复性能分位数、浏览器背压和多节点故障域实验。
+当前完整门禁最近一次结果为后端 134 通过、5 个 opt-in 外部集成按默认配置跳过，前端 59/59，
+Frontend/Backend/Desktop 远端检查全部通过；这不替代 Issue #129 中尚未完成的 20 分钟长时稳定性、
+真实 provider 与浏览器下的重复性能分位数、声学测量和多节点故障域实验。
