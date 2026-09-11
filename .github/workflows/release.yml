@@ -10,6 +10,11 @@ on:
         description: 已存在的 v* tag（仅用于重新运行构建，发布仍需确认）
         required: true
         type: string
+      deploy_package:
+        description: 是否向 Maven Packages 推送版本（已存在版本重跑时请选择 false）
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -68,7 +73,12 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           mvn -B test
-          mvn -B deploy -DskipTests
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.deploy_package }}" != "true" ]]; then
+            echo "跳过已存在 Maven 版本的重复 deploy，继续构建发行 JAR 与 source JAR"
+            mvn -B package -DskipTests
+          else
+            mvn -B deploy -DskipTests
+          fi
       - name: 组装统一发行包
         shell: bash
         run: |
