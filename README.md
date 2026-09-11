@@ -1,16 +1,17 @@
-<div align="center">
+# BabelFlux Java / 巴别流同传
 
-## DEMO
+<p align="center">
+  <a href="https://github.com/ZhaoXingPeng/BabelFLUX-java/actions/workflows/ci.yml"><img src="https://github.com/ZhaoXingPeng/BabelFLUX-java/actions/workflows/ci.yml/badge.svg?branch=main" alt="Quality Gates" /></a>
+  <a href="https://github.com/ZhaoXingPeng/BabelFLUX-java/releases"><img src="https://img.shields.io/github/v/release/ZhaoXingPeng/BabelFLUX-java?display_name=tag&sort=semver&style=flat-square&label=Release" alt="Latest release" /></a>
+  <a href="https://github.com/ZhaoXingPeng/BabelFLUX-java/packages"><img src="https://img.shields.io/badge/Maven%20Package-0.1.1-1f6feb?style=flat-square&logo=apachemaven&logoColor=white" alt="Maven Package 0.1.1" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-2ea44f?style=flat-square" alt="Apache 2.0 license" /></a>
+</p>
 
-[![BabelFlux Java 同传演示](docs/design/babelflux-java-demo-cover.jpg)](https://www.bilibili.com/video/BV1cjEh6BEyu/)
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV1cjEh6BEyu/">观看 Demo 演示视频（Bilibili）</a>
+</p>
 
-[点击观看 BabelFlux / 巴别流同传演示视频](https://www.bilibili.com/video/BV1cjEh6BEyu/)
-
-</div>
-
----
-
-![BabelFlux Java / 巴别流同传仓库主图](docs/design/babelflux-java-demo-cover.jpg)
+> 面向会议、课程与技术分享的实时语音同传系统：Vue/Tauri 工作台、Java 21 + Spring Boot 后端、阿里云百炼实时翻译链路，以及可选的 MyBatis、Flyway、Redis、RabbitMQ 和 Elasticsearch 适配。
 
 > BabelFlux / 巴别流 同传把英语等外语的**单向音频流**实时翻译成中文，以**双语字幕 / 语音**呈现，并能在传译过程中**自动纠正**已经输出的识别/翻译错误。面向演讲、技术分享、国际会议与网课等「跟不上、听不懂、来不及记」的场景。
 >
