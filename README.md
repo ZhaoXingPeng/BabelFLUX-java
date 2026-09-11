@@ -135,10 +135,10 @@ npm run client:register     # 注册 lingosync:// 到 release exe
 
 ## 初始发布与获取
 
-[`v0.1.0`](https://github.com/ZhaoXingPeng/BabelFLUX-java/releases/tag/v0.1.0) 是首个可追溯发行版。Release 包含以下资产：
+`v0.1.0` 是首个 annotated tag，Maven `0.1.0` 已发布到 Packages。由于首轮 Windows 打包暴露了发布元数据问题，未重写公开 tag；包含全部修复的 [`v0.1.1`](https://github.com/ZhaoXingPeng/BabelFLUX-java/releases/tag/v0.1.1) 是首个可下载 Release。Release 包含以下资产：
 
-- `babelflux-v0.1.0-bundle.zip`：Spring Boot 可执行 JAR、Web `dist`、部署模板、README、LICENSE 与 SECURITY 文档；不包含 `.env`、密钥或真实数据。
-- `BabelFlux Floating Caption_0.1.0_x64-setup.exe`：Windows x64 的 NSIS 桌面悬浮字幕安装包。
+- `babelflux-v0.1.1-bundle.zip`：Spring Boot 可执行 JAR、Web `dist`、部署模板、README、LICENSE 与 SECURITY 文档；不包含 `.env`、密钥或真实数据。
+- `BabelFlux Floating Caption_0.1.1_x64-setup.exe`：Windows x64 的 NSIS 桌面悬浮字幕安装包。
 - `SHA256SUMS.txt`：上述 ZIP 与 Windows 安装包的 SHA-256 校验和。
 
 下载后可在 PowerShell 校验资产完整性：
@@ -147,7 +147,7 @@ npm run client:register     # 注册 lingosync:// 到 release exe
 Get-FileHash .\文件名 -Algorithm SHA256
 ```
 
-后端同步发布到 GitHub Packages Maven Registry：`com.babelflux:babelflux-backend:0.1.0`，Registry 为 `https://maven.pkg.github.com/ZhaoXingPeng/BabelFLUX-java`。消费私有包时，使用具备 `read:packages` 权限的 GitHub 凭据配置 Maven `server`，不要将 token 写入 `pom.xml`、仓库或日志。
+后端同步发布到 GitHub Packages Maven Registry：`com.babelflux:babelflux-backend:0.1.1`，Registry 为 `https://maven.pkg.github.com/ZhaoXingPeng/BabelFLUX-java`。消费私有包时，使用具备 `read:packages` 权限的 GitHub 凭据配置 Maven `server`，不要将 token 写入 `pom.xml`、仓库或日志。
 
 Release 只提供可验证构建产物，不会自动部署。回滚时使用前一个已验证 Release 的资产，并按照 [`deployment/README.md`](deployment/README.md) 将服务软链接切回该版本。
 

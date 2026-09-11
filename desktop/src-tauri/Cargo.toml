@@ -1,6 +1,6 @@
 [package]
 name = "lingosync-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "BabelFlux desktop floating caption overlay"
 authors = ["RedamancyZXP"]
 edition = "2021"

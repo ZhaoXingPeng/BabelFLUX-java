@@ -13,7 +13,7 @@
 
     <groupId>com.babelflux</groupId>
     <artifactId>babelflux-backend</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <name>BabelFlux Java Backend</name>
     <description>Spring Boot backend for the BabelFlux simultaneous interpretation assistant</description>
 
