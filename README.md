@@ -1,4 +1,8 @@
-# BabelFlux Java / 巴别流同传
+<h1 align="center">BabelFlux Java / 巴别流同传</h1>
+
+<p align="center">
+  <img src="docs/design/babelflux-java-project-banner.jpg" alt="BabelFlux Java / 巴别流同传项目主图：语音波形与对话图标" width="900" />
+</p>
 
 <p align="center">
   <a href="https://github.com/ZhaoXingPeng/BabelFLUX-java/actions/workflows/ci.yml"><img src="https://github.com/ZhaoXingPeng/BabelFLUX-java/actions/workflows/ci.yml/badge.svg?branch=main" alt="Quality Gates" /></a>
