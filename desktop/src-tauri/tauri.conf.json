@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "BabelFlux Floating Caption",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.babelflux.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
