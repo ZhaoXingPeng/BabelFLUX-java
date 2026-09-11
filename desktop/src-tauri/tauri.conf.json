@@ -39,6 +39,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": ["icons/icon.ico"],
     "category": "Productivity",
     "shortDescription": "Desktop floating captions for BabelFlux",
     "longDescription": "Transparent always-on-top floating caption overlay for BabelFlux sessions."
