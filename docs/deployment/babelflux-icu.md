@@ -28,6 +28,7 @@
 - 后端：`babelflux.service`，`127.0.0.1:8000`
 - 前端：Nginx `:80`，`babelflux.icu` / `www.babelflux.icu`
 - 配置：`/etc/babelflux/babelflux.env`、`/etc/systemd/system/babelflux.service`、`/etc/nginx/sites-available/babelflux`
+- 简历预览：授权 PDF 位于服务器 `/opt/babelflux/public/cv.pdf`，通过 Nginx 精确 location `/cv` 内联提供；文件不进入 Git。
 
 ### 实测结果
 
@@ -57,3 +58,6 @@ ln -sfn /opt/babelflux/releases/<previous-version> /opt/babelflux/current
 systemctl start babelflux
 nginx -t && systemctl reload nginx
 ```
+
+简历入口回退时只需移除两个 HTTPS server 中的 `deployment/nginx/cv.location.conf`
+对应 location 并 reload Nginx，不影响 BabelFlux 应用发布和数据卷。
